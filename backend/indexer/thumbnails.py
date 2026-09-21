@@ -30,6 +30,23 @@ from .models3d import THUMBNAILABLE_EXTS as MODEL_THUMBNAIL_EXTS
 logger = logging.getLogger("grimoire.indexer")
 
 
+# Pillow rejects any image above 2x MAX_IMAGE_PIXELS (89 MP by default) as a
+# possible decompression bomb, a ceiling sized for untrusted web uploads. A
+# 60x60in battlemap scanned at 300 DPI is 18000x18000 = 324 MP and entirely
+# legitimate, so maps that large indexed with no thumbnail at all and only an
+# error in the log.
+#
+# The ceiling assumes the decode costs on the order of a gigabyte. It does not
+# here: thumbnail() calls draft(), so a JPEG is decoded at a reduced DCT scale.
+# A 324 MP map measures ~2s and ~42 MB peak, not ~1 GB.
+#
+# Raised rather than disabled. PNG gets no draft() benefit and would decode in
+# full, and user-supplied files reach this module through the library upload
+# path, so a hostile one should still meet a ceiling. This warns above 400 MP
+# and errors above 800 MP.
+Image.MAX_IMAGE_PIXELS = 400_000_000
+
+
 def archive_ext(filename: str) -> str:
     """Return the archive extension for *filename* (lowercased), or "".
 

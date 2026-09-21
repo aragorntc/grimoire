@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 
 from backend.config import SessionLocal
 from backend import indexer, pdf_worker
@@ -1132,3 +1133,38 @@ class TestWorkerThreadingAndOrphans:
         proc = MagicMock(pid=4242)
         _subprocess._kill_worker(proc)
         proc.terminate.assert_called_once()
+class TestLargeImageCeiling:
+    """A legitimate 300 DPI battlemap must not be taken for a decompression bomb.
+
+    Pillow raises above 2x ``MAX_IMAGE_PIXELS`` (89 MP by default), a ceiling
+    sized for untrusted web uploads. A 60x60in map scanned at 300 DPI is
+    18000x18000 = 324 MP, so maps that size indexed with no thumbnail and only
+    an error in the log. ``backend.indexer.thumbnails`` raises the ceiling.
+
+    Asserted as configuration rather than behaviour deliberately: a fixture big
+    enough to cross the old threshold would cost hundreds of MB to encode, for a
+    check that reads the header and never decodes the pixels.
+    """
+
+    # 60x60 inches at 300 DPI — the largest map found in a real library.
+    LARGEST_REAL_MAP_PX = 18000 * 18000
+
+    def test_a_300dpi_battlemap_is_below_the_bomb_threshold(self):
+        # Pillow errors above 2x the limit and warns above 1x. A library full of
+        # legitimate maps should trip neither.
+        assert Image.MAX_IMAGE_PIXELS > self.LARGEST_REAL_MAP_PX
+
+    def test_the_ceiling_is_raised_not_removed(self):
+        # None would also fix the bug, but PNG gets no draft() benefit and would
+        # decode in full, and uploads reach this path, so a ceiling stays.
+        assert Image.MAX_IMAGE_PIXELS is not None
+
+    def test_ordinary_thumbnail_generation_still_works(self, tmp_path):
+        # Guards the import-time assignment itself: if thumbnails.py stopped
+        # importing, or Image were shadowed, the asserts above could pass
+        # vacuously while nothing worked.
+        src = tmp_path / "map.png"
+        Image.new("RGB", (40, 30), "red").save(src, "PNG")
+        out = tmp_path / "thumb.webp"
+        assert indexer.generate_thumbnail(str(src), str(out)) is True
+        assert out.exists()
