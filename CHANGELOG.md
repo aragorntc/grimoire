@@ -13,6 +13,10 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - Italian (it-IT) localization
 - Link to the documentation site from the About dialog
 
+### Changed
+
+- Keep folder structure when importing campaign notes as a folder or a zip
+
 ### Fixed
 
 - Non-Docker installs report their real version instead of `1.0.0` in the About dialog
@@ -21,6 +25,9 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - Ungrouped galleries load in the order they display, so cards no longer pop in among those already on screen
 - Renamed maps and tokens keep their thumbnails, and a thumbnail that has gone missing is re-rendered by the next scan
 - Quoted searches match the words together as a phrase, instead of returning every page that mentions each word somewhere
+- Keep the reader's zoom controls from shifting under the cursor
+- Keep row action menus inside the visible window
+- Restore the reader's panel controls on phones and improve the header bar on mobile
 
 ## [1.7.1] - 2026-09-16
 
