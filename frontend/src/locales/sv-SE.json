@@ -1046,7 +1046,7 @@
       "folderPlacement": "Mappar i boklistor",
       "folderPlacementFirst": "Mappar först",
       "folderPlacementMixed": "Blandat med böcker",
-      "folderPlacementHint": "Blandat sorterar varje mapp bland böckerna bredvid den, efter namn - eller, för andra sorteringar, efter dess första bok.",
+      "folderPlacementHint": "Blandat sorterar varje mapp tillsammans med böckerna, sida vid sida. Sortering sker efter namn - eller för andra typer av sorteringar, efter dess första bok.",
       "viewMode": "Standardvy",
       "viewModeSystems": "System",
       "viewModeBooks": "Böcker",
