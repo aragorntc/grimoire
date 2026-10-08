@@ -138,14 +138,26 @@ _CONTAINER_SUFFIXES = {
 }
 
 CATEGORY_MAP = {
-    "core": ["core", "core rule", "rulebook", "rules", "phb", "dmg", "mm", "basic", "player", "gm", "game master"],
-    "supplement": ["supplement", "expansion", "sourcebook", "source", "guide", "companion"],
+    "core": ["core", "rulebook", "rules", "phb", "dmg", "mm", "basic"],
+    "supplement": ["supplement", "expansion", "sourcebook", "guide", "companion"],
     "adventure": ["adventure", "module", "campaign", "scenario", "quest"],
-    "character-sheet": ["character sheet", "charsheet", "sheet"],
+    "character-sheet": ["character sheet", "charsheet"],
     "map": ["map", "battlemap", "battle map", "dungeon map"],
     "handout": ["handout", "reference", "cheat", "quick ref", "screen"],
     "homebrew": ["homebrew", "custom", "house rules", "unofficial"],
     "starter-set": ["starter set", "starter kit", "beginner box", "boxed set", "essentials"],
+}
+
+# Folder names that pick a category only when they are the *whole* folder name
+# (singular or plural). These words are too broad for CATEGORY_MAP's any-word
+# matching: as part of a longer name they would override a more specific word
+# ("Player Handouts", "GM Screens", "Cheat Sheets", "Source Adventures").
+CATEGORY_EXACT_NAMES = {
+    "player": "core",
+    "gm": "core",
+    "game master": "core",
+    "sheet": "character-sheet",
+    "source": "supplement",
 }
 
 # Normalized folder names (after slugify) that are treated as the system-agnostic

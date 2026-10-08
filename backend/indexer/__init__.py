@@ -30,6 +30,7 @@ logger = logging.getLogger("grimoire.indexer")
 from .constants import (  # noqa: E402,F401
     ARCHIVE_EXTS,
     AUDIO_EXTS,
+    CATEGORY_EXACT_NAMES,
     CATEGORY_MAP,
     CONTAINER_ONE_PAGE,
     CONTAINER_PARENT,

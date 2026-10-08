@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import config
 from ..models import AppSetting
 from .constants import (
+    CATEGORY_EXACT_NAMES,
     CATEGORY_MAP,
     CONTAINER_MARKERS,
     CONTAINER_ONE_PAGE,
@@ -190,8 +191,16 @@ def _keyword_matches(keyword: str, tokens: list[str]) -> bool:
 
 
 def _match_category(segment: str) -> str | None:
-    """Return the CATEGORY_MAP category a single folder ``segment`` matches, or None."""
+    """Return the category a single folder ``segment`` matches, or None.
+
+    A whole-name match in CATEGORY_EXACT_NAMES (``Players``, ``GMs``,
+    ``Sheets``) is checked first; otherwise the first CATEGORY_MAP category with
+    a keyword matching any word of the name wins.
+    """
     tokens = _normalize_folder(segment).split()
+    for name, category in CATEGORY_EXACT_NAMES.items():
+        if len(name.split()) == len(tokens) and _keyword_matches(name, tokens):
+            return category
     for category, keywords in CATEGORY_MAP.items():
         if any(_keyword_matches(kw, tokens) for kw in keywords):
             return category

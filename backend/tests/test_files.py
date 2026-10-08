@@ -1419,6 +1419,20 @@ class TestScaffoldCategories:
         assert again["created"] == [], "a second run must be a no-op"
         assert "Supplements" in again["existing"]
 
+    def test_broad_word_folders_do_not_cover_other_categories(self, library_tree):
+        """"Cheat Sheets" and "Player Handouts" are handout shelves (#539).
+
+        Neither may count as the character-sheet folder, so "Character Sheets"
+        is still created beside them.
+        """
+        base = f"books/System-{library_tree}"
+        for name in ("Cheat Sheets", "Player Handouts"):
+            os.makedirs(os.path.join(LIB, base, name), exist_ok=True)
+
+        result = fs.scaffold_categories(base)
+        assert "Character Sheets" in result["created"]
+        assert "Handouts" not in result["created"]
+
     def test_scaffolded_names_infer_back_to_canonical_categories(self, library_tree):
         """The folders must classify correctly on the next scan, not just read well."""
         from backend.indexer.categories import guess_category

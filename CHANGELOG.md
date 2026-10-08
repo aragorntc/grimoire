@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release candidates are omitted; their contents are rolled into the stable release that followed.
 
-## [Unreleased]
+## [1.8.0] - 2026-10-08
 
 ### Added
 
@@ -22,10 +22,13 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - Keep several characters in one campaign, and mark one retired or dead instead of deleting it
 - Character art, and export or import of a character as a self-contained file
 - A guide and full reference for writing your own sheets and content packs, in the community add-ons repository
+- Items added in the last week carry a "New" badge, and books can be sorted by date added or filtered to recent additions (#535)
+- More category folder names: `Players`, `GMs` and `Game Masters` hold core rulebooks, `Sheets` holds character sheets, `Sources` holds supplements, and `Unofficial` holds homebrew (#539)
 
 ### Changed
 
 - Groups with more than 25 items open collapsed; your own open/close choices are kept
+- Large libraries load as you scroll: a system's books, the map, token, audio and model galleries, and tag pages fetch one page at a time from the server (#537)
 
 ### Fixed
 
@@ -40,6 +43,7 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - A scan stuck at "running" after a restart or crash can be cleared with **Stop** (#524)
 - A PDF's table of contents still shows when one bookmark points past the last page
 - A book whose file got shorter opens on its last page instead of a page that no longer exists
+- Links and formatting inside a `||GM secret||` in campaign notes render correctly, and paragraphs in notes keep their spacing (#536)
 
 ## [1.7.3] - 2026-10-01
 
@@ -554,6 +558,7 @@ Initial release. A self-hosted library manager for your TTRPG PDFs, battlemaps, 
 - Explicit content controls with per-user opt-in
 - Docker-first deployment
 
+[1.8.0]: https://github.com/hunter-read/grimoire/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/hunter-read/grimoire/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/hunter-read/grimoire/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/hunter-read/grimoire/compare/v1.7.0...v1.7.1

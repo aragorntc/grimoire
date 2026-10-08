@@ -29,14 +29,16 @@ Folder name matching is **case-insensitive**, and hyphens, underscores, and spac
 
 | Category | Recognized folder names | What goes here |
 |---|---|---|
-| Core Rulebooks | `core`, `core rules`, `rulebooks`, `rules`, `players`, `gms`, `game masters` | Player handbooks, GM guides, base rules |
+| Core Rulebooks | `core`, `rulebooks`, `rules`, `players`, `gms`, `game masters` | Player handbooks, GM guides, base rules |
 | Starter Set | `starter-set`, `starter kit`, `beginner box`, `boxed set`, `essentials` | Starter/beginner boxes, introductory sets |
-| Supplements | `supplements`, `sourcebooks`, `source`, `expansions` | Sourcebooks, expansions, setting guides |
+| Supplements | `supplements`, `sourcebooks`, `sources`, `expansions` | Sourcebooks, expansions, setting guides |
 | Adventures | `adventures`, `modules`, `campaigns` | Published modules, campaigns, one-shots |
 | Character Sheets | `character-sheets`, `character sheets`, `charsheets`, `sheets` | Fillable sheets, alternative layouts |
 | Handouts | `handouts`, `reference`, `screen` | Reference cards, DM screens, quick-ref sheets |
 | Homebrew | `homebrew`, `custom`, `house-rules`, `unofficial` | Community/custom content, house rules |
 
+> `players`, `gms`, `game masters`, `sheets` and `sources` count only when they are the whole folder name. In a longer name the more specific word decides: `Player Handouts` and `GM Screens` are handouts, `Cheat Sheets` stays with handouts, and `Source Adventures` are adventures.
+>
 > Files placed directly in a system folder (not in a subfolder) default to the **core** category.
 >
 > Any subfolder name that doesn't match the recognized keywords becomes its own category, slugified from the folder name. For example, a folder named `Bestiary` becomes the `bestiary` category.

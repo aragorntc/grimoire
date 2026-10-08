@@ -188,6 +188,89 @@ class TestWholeWordKeywordMatching:
         assert guess_category("books/D&D 5e/Battle Map/grid.pdf") == "map"
 
 
+class TestExactFolderNames:
+    """Broad words name a category only as the whole folder name (#539).
+
+    ``player``, ``gm``, ``game master``, ``sheet`` and ``source`` are too common
+    to match inside a longer name, where they would override the more specific
+    word and file "Player Handouts" as core or "Cheat Sheets" as character sheets.
+    """
+
+    def test_players_folder_is_core(self):
+        assert guess_category("books/D&D 5e/Players/phb.pdf") == "core"
+
+    def test_singular_player_folder_is_core(self):
+        assert guess_category("books/D&D 5e/Player/phb.pdf") == "core"
+
+    def test_gm_folder_is_core(self):
+        assert guess_category("books/D&D 5e/GM/dmg.pdf") == "core"
+
+    def test_gms_folder_is_core(self):
+        assert guess_category("books/D&D 5e/GMs/dmg.pdf") == "core"
+
+    def test_game_masters_folder_is_core(self):
+        assert guess_category("books/D&D 5e/Game_Masters/dmg.pdf") == "core"
+
+    def test_sheets_folder_is_character_sheet(self):
+        assert guess_category("books/D&D 5e/Sheets/blank.pdf") == "character-sheet"
+
+    def test_source_folder_is_supplement(self):
+        assert guess_category("books/D&D 5e/Source/xgte.pdf") == "supplement"
+
+    def test_sources_folder_is_supplement(self):
+        assert guess_category("books/D&D 5e/SOURCES/xgte.pdf") == "supplement"
+
+    def test_player_handouts_is_handout(self):
+        assert guess_category("books/D&D 5e/Player Handouts/x.pdf") == "handout"
+
+    def test_gm_screens_is_handout(self):
+        assert guess_category("books/D&D 5e/GM Screens/x.pdf") == "handout"
+
+    def test_player_character_sheets_is_character_sheet(self):
+        result = guess_category("books/D&D 5e/Player Character Sheets/x.pdf")
+        assert result == "character-sheet"
+
+    def test_player_maps_is_map(self):
+        assert guess_category("books/D&D 5e/Player Maps/x.pdf") == "map"
+
+    def test_gm_adventures_is_adventure(self):
+        assert guess_category("books/D&D 5e/GM Adventures/x.pdf") == "adventure"
+
+    def test_cheat_sheets_is_handout(self):
+        assert guess_category("books/D&D 5e/Cheat Sheets/x.pdf") == "handout"
+
+    def test_quick_reference_sheets_is_handout(self):
+        assert guess_category("books/D&D 5e/Quick Reference Sheets/x.pdf") == "handout"
+
+    def test_map_sheets_is_map(self):
+        assert guess_category("books/D&D 5e/Map Sheets/x.pdf") == "map"
+
+    def test_source_adventures_is_adventure(self):
+        assert guess_category("books/D&D 5e/Source Adventures/x.pdf") == "adventure"
+
+    def test_unmatched_longer_name_stays_custom(self):
+        # No keyword in the rest of the name: the folder is its own category,
+        # not core just because it mentions players.
+        assert guess_category("books/D&D 5e/Player Options/x.pdf") == "player-options"
+
+    def test_system_name_containing_source_keeps_core_default(self):
+        # Books directly in a system folder scan the system name itself; the
+        # word "Source" in it must not turn them into supplements.
+        assert guess_category("books/Open Source RPG/x.pdf") == "core"
+
+    def test_broad_word_subfolder_under_custom_folder_does_not_override(self):
+        assert guess_category("books/D&D 5e/Lore/Players/x.pdf") == "lore"
+
+
+class TestUnofficialKeyword:
+    def test_unofficial_folder_is_homebrew(self):
+        assert guess_category("books/D&D 5e/Unofficial/x.pdf") == "homebrew"
+
+    def test_unofficial_more_specific_category_wins(self):
+        # Like "Custom", it sits after the content categories, so an unofficial
+        # adventure is still an adventure.
+        assert guess_category("books/D&D 5e/Unofficial Adventures/x.pdf") == "adventure"
+
 class TestIsSystemAgnosticFolder:
     """Tests for is_system_agnostic_folder()."""
 
