@@ -138,13 +138,13 @@ _CONTAINER_SUFFIXES = {
 }
 
 CATEGORY_MAP = {
-    "core": ["core", "rulebook", "rules", "phb", "dmg", "mm", "basic"],
-    "supplement": ["supplement", "expansion", "sourcebook", "guide", "companion"],
+    "core": ["core", "core rule", "rulebook", "rules", "phb", "dmg", "mm", "basic", "player", "gm", "game master"],
+    "supplement": ["supplement", "expansion", "sourcebook", "source", "guide", "companion"],
     "adventure": ["adventure", "module", "campaign", "scenario", "quest"],
-    "character-sheet": ["character sheet", "charsheet"],
+    "character-sheet": ["character sheet", "charsheet", "sheet"],
     "map": ["map", "battlemap", "battle map", "dungeon map"],
     "handout": ["handout", "reference", "cheat", "quick ref", "screen"],
-    "homebrew": ["homebrew", "custom", "house rules"],
+    "homebrew": ["homebrew", "custom", "house rules", "unofficial"],
     "starter-set": ["starter set", "starter kit", "beginner box", "boxed set", "essentials"],
 }
 

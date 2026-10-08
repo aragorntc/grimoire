@@ -29,13 +29,13 @@ Folder name matching is **case-insensitive**, and hyphens, underscores, and spac
 
 | Category | Recognized folder names | What goes here |
 |---|---|---|
-| Core Rulebooks | `core`, `rulebooks`, `rules` | Player handbooks, GM guides, base rules |
+| Core Rulebooks | `core`, `core rules`, `rulebooks`, `rules`, `players`, `gms`, `game masters` | Player handbooks, GM guides, base rules |
 | Starter Set | `starter-set`, `starter kit`, `beginner box`, `boxed set`, `essentials` | Starter/beginner boxes, introductory sets |
-| Supplements | `supplements`, `sourcebooks`, `expansions` | Sourcebooks, expansions, setting guides |
+| Supplements | `supplements`, `sourcebooks`, `source`, `expansions` | Sourcebooks, expansions, setting guides |
 | Adventures | `adventures`, `modules`, `campaigns` | Published modules, campaigns, one-shots |
-| Character Sheets | `character-sheets`, `character sheets`, `charsheets` | Fillable sheets, alternative layouts |
+| Character Sheets | `character-sheets`, `character sheets`, `charsheets`, `sheets` | Fillable sheets, alternative layouts |
 | Handouts | `handouts`, `reference`, `screen` | Reference cards, DM screens, quick-ref sheets |
-| Homebrew | `homebrew`, `custom`, `house-rules` | Community/custom content, house rules |
+| Homebrew | `homebrew`, `custom`, `house-rules`, `unofficial` | Community/custom content, house rules |
 
 > Files placed directly in a system folder (not in a subfolder) default to the **core** category.
 >
