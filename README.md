@@ -3,6 +3,9 @@
 
 # Grimoire - Self-Hosted TTRPG Library Manager
 
+> [!TIP]
+> **Looking for a group to play with?** I also built [Find Tabletop](https://findtabletop.games), a free way to find tabletop RPG groups and players. Grimoire handles your library; Find Tabletop helps you find the table.
+
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/9Sd4CGZC63)
 [![CI](https://github.com/hunter-read/grimoire/actions/workflows/ci.yml/badge.svg)](https://github.com/hunter-read/grimoire/actions/workflows/ci.yml)
 [![Backend coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/hunter-read/ae49bfa368af7a6492b40a0e4ae2455a/raw/grimoire-backend-coverage.json)](https://github.com/hunter-read/grimoire/actions/workflows/ci.yml)
