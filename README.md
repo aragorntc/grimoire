@@ -17,7 +17,7 @@
 </div>
 
 > [!TIP]
-> **Looking for a group to play with?** I also built [Find Tabletop](https://findtabletop.games), a free way to find tabletop RPG groups and players. Grimoire handles your library; Find Tabletop helps you find the table.
+> **Looking for a group to play with?** I also built [findtabletop.games](https://findtabletop.games), a free way to find tabletop RPG groups and players. Grimoire handles your library; Find Tabletop helps you find the table.
 
 A self-hosted web app for your tabletop RPG library. Point it at a folder of PDFs, maps,
 tokens, audio, and 3D models, and Grimoire turns it into a searchable library you can
