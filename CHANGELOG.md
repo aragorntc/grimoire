@@ -24,6 +24,7 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - The audio list names each track by its tags - `03 · Die Sümpfe Harodiens`, with artist, album and duration beneath - and falls back to the filename, without its extension, for untagged files
 - Audio opens in album order: within a folder, tracks play by disc and track number whatever their files are called. Pick Track in the sort menu to get it back after choosing another order. Existing tracks pick up their numbers on the next scan
 - Admins can style the OIDC sign-in button to match their provider: background, text and border colours, corner radius, and an uploaded logo, under Settings → Authentication, or pinned with `OIDC_BUTTON_*` environment variables
+- Magazines & Zines is a built-in book category: folders named `Magazines`, `Zines`, `Periodicals`, `Dragon Magazine` and the like are filed there on the next scan, and Create standard category folders adds a `Magazines` folder
 
 ### Changed
 
