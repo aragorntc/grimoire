@@ -128,6 +128,11 @@ PERMISSIONS: dict[str, Permission] = {
     "addons": Permission(
         ("addons",), "Community metadata add-ons: install, update, enable, run", "admin"
     ),
+    "codex": Permission(
+        ("codex",),
+        "Grimoire Codex DB: connection settings, sending records and unlinking them",
+        "admin",
+    ),
     "maintenance": Permission(("maintenance",), "Metadata sidecar settings and export", "admin"),
     "backups": Permission(
         ("backups",), "List, create, download and delete backups, and the backup schedule", "admin"

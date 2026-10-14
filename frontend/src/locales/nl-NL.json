@@ -1408,6 +1408,10 @@
           "label": "Add-ons",
           "description": "Community-add-ons voor metadata: installeren, bijwerken, inschakelen, uitvoeren"
         },
+        "codex": {
+          "label": "Grimoire Codex DB",
+          "description": "Grimoire Codex DB-verbindingsinstellingen, en records sturen en ontkoppelen"
+        },
         "maintenance": {
           "label": "Onderhoud",
           "description": "Instellingen en export van metadata-sidecarbestanden"
@@ -2247,7 +2251,8 @@
     "replaceCover": "Afbeelding vervangen",
     "removeCover": "Verwijderen",
     "coverUploadFailed": "Uploaden mislukt",
-    "folderCoverInUse": "Er wordt een omslagafbeelding uit de bibliotheekmap van dit systeem gebruikt. Verwijder deze uit de map om in plaats daarvan een upload te gebruiken."
+    "folderCoverInUse": "Er wordt een omslagafbeelding uit de bibliotheekmap van dit systeem gebruikt. Verwijder deze uit de map om in plaats daarvan een upload te gebruiken.",
+    "codex_id": "Grimoire Codex DB-koppeling"
   },
   "bookEditor": {
     "title": "Boek bewerken",
@@ -3469,6 +3474,50 @@
     "document": "Regelset (JSON of YAML)",
     "documentHelp": "Een geëxporteerde of met de hand geschreven regelset. Deze heeft een \"entries\"-sectie nodig, gegroepeerd per inhoudstype.",
     "needRulesetFirst": "Maak eerst een regelset om in te importeren"
+  },
+  "codex": {
+    "settings": {
+      "title": "Grimoire Codex DB",
+      "description": "De communitycatalogus van TTRPG-systemen en -boeken, ingebouwd in Grimoire. \"Metadata ophalen\" kan daar records opzoeken, en een resultaat toepassen koppelt het record eraan.",
+      "url": "Grimoire Codex DB-adres",
+      "urlHint": "Wijzig dit alleen om een zelf gehoste Grimoire Codex DB te gebruiken.",
+      "sendHashes": "Bestandshashes meesturen bij het opzoeken van boeken",
+      "sendHashesHint": "Herkent een boek precies, ook met een rommelige bestandsnaam, maar vertelt Grimoire Codex DB welke bestanden deze bibliotheek bevat.",
+      "tokenFromEnv": "Gebruikt de API-token uit GRIMOIRE_CODEX_DB_API_TOKEN. Alles wat je stuurt staat op naam van het Grimoire Codex DB-account van die token.",
+      "test": "Verbinding testen",
+      "connected": "Verbonden.",
+      "connectedAs": "Verbonden als {{name}} ({{role}})",
+      "lockedBy": "Ingesteld door {{name}} in de omgeving."
+    },
+    "panel": {
+      "title": "Grimoire Codex DB",
+      "linked": "Gekoppeld · bekijken op Grimoire Codex DB",
+      "notLinked": "Niet gekoppeld. Gebruik \"Metadata ophalen\" om het in Grimoire Codex DB te vinden.",
+      "sendCorrection": "Correcties sturen",
+      "add": "Toevoegen aan Grimoire Codex DB",
+      "unlink": "Ontkoppelen",
+      "chooseFields": "Welke velden moet Grimoire Codex DB uit deze bibliotheek overnemen?",
+      "addBookHint": "Dit maakt het boek aan in Grimoire Codex DB, onder het Grimoire Codex DB-record van zijn spelsysteem, zichtbaar voor iedereen. Afhankelijk van je Grimoire Codex DB-account wacht het mogelijk op beoordeling.",
+      "addSystemHint": "Dit maakt het systeem aan in Grimoire Codex DB, zichtbaar voor iedereen. Afhankelijk van je Grimoire Codex DB-account wacht het mogelijk op beoordeling.",
+      "noteOptional": "Notitie voor beoordelaars (optioneel)",
+      "noteRequired": "Waar komt dit vandaan?",
+      "notePlaceholder": "bijv. Van de productpagina van de uitgever",
+      "send": "Sturen",
+      "sending": "Bezig met sturen…",
+      "cancel": "Annuleren",
+      "applied": "Verstuurd en live op Grimoire Codex DB.",
+      "pending": "Verstuurd. Het wacht op beoordeling in Grimoire Codex DB.",
+      "viewEdit": "Wijziging bekijken"
+    },
+    "fields": {
+      "authors": "Auteurs",
+      "artists": "Illustratoren",
+      "publisherUrl": "Link van de uitgever",
+      "pageCount": "Aantal pagina’s",
+      "explicit": "Expliciet",
+      "systemAgnostic": "Systeemonafhankelijk",
+      "onePage": "Eén pagina"
+    }
   },
   "share": {
     "button": "Delen",

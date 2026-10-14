@@ -1408,6 +1408,10 @@
           "label": "Add-ons",
           "description": "Community-Metadaten-Add-ons: installieren, aktualisieren, aktivieren, ausführen"
         },
+        "codex": {
+          "label": "Grimoire Codex DB",
+          "description": "Grimoire-Codex-DB-Verbindungseinstellungen sowie Senden und Lösen von Einträgen"
+        },
         "maintenance": {
           "label": "Wartung",
           "description": "Einstellungen und Export von Metadaten-Sidecar-Dateien"
@@ -2247,7 +2251,8 @@
     "replaceCover": "Bild ersetzen",
     "removeCover": "Entfernen",
     "coverUploadFailed": "Upload fehlgeschlagen",
-    "folderCoverInUse": "Es wird ein Titelbild aus dem Bibliotheksordner dieses Systems verwendet. Entferne es aus dem Ordner, um stattdessen einen Upload zu nutzen."
+    "folderCoverInUse": "Es wird ein Titelbild aus dem Bibliotheksordner dieses Systems verwendet. Entferne es aus dem Ordner, um stattdessen einen Upload zu nutzen.",
+    "codex_id": "Grimoire-Codex-DB-Verknüpfung"
   },
   "bookEditor": {
     "title": "Buch bearbeiten",
@@ -3469,6 +3474,50 @@
     "document": "Regelsatz (JSON oder YAML)",
     "documentHelp": "Ein exportierter oder von Hand geschriebener Regelsatz. Er benötigt einen Abschnitt \"entries\", nach Inhaltstyp gruppiert.",
     "needRulesetFirst": "Erstellen Sie zuerst einen Regelsatz zum Importieren"
+  },
+  "codex": {
+    "settings": {
+      "title": "Grimoire Codex DB",
+      "description": "Der Community-Katalog für TTRPG-Systeme und -Bücher, direkt in Grimoire eingebaut. „Metadaten abrufen“ kann dort nachschlagen, und das Übernehmen eines Treffers verknüpft den Eintrag damit.",
+      "url": "Grimoire-Codex-DB-Adresse",
+      "urlHint": "Nur ändern, um eine selbst gehostete Grimoire Codex DB zu verwenden.",
+      "sendHashes": "Beim Nachschlagen von Büchern Datei-Hashes senden",
+      "sendHashesHint": "Erkennt ein Buch genau, auch bei unordentlichem Dateinamen, verrät Grimoire Codex DB aber, welche Dateien diese Bibliothek enthält.",
+      "tokenFromEnv": "Verwendet das API-Token aus GRIMOIRE_CODEX_DB_API_TOKEN. Alles Gesendete wird dem Grimoire-Codex-DB-Konto dieses Tokens zugeschrieben.",
+      "test": "Verbindung testen",
+      "connected": "Verbunden.",
+      "connectedAs": "Verbunden als {{name}} ({{role}})",
+      "lockedBy": "Durch {{name}} in der Umgebung festgelegt."
+    },
+    "panel": {
+      "title": "Grimoire Codex DB",
+      "linked": "Verknüpft · in Grimoire Codex DB ansehen",
+      "notLinked": "Nicht verknüpft. Nutze „Metadaten abrufen“, um es in Grimoire Codex DB zu finden.",
+      "sendCorrection": "Korrekturen senden",
+      "add": "Zu Grimoire Codex DB hinzufügen",
+      "unlink": "Verknüpfung lösen",
+      "chooseFields": "Welche Felder soll Grimoire Codex DB aus dieser Bibliothek übernehmen?",
+      "addBookHint": "Damit wird das Buch in Grimoire Codex DB angelegt, unter dem Grimoire-Codex-DB-Eintrag seines Spielsystems, für alle sichtbar. Je nach Grimoire-Codex-DB-Konto wartet es eventuell auf Prüfung.",
+      "addSystemHint": "Damit wird das System in Grimoire Codex DB angelegt, für alle sichtbar. Je nach Grimoire-Codex-DB-Konto wartet es eventuell auf Prüfung.",
+      "noteOptional": "Hinweis für Prüfende (optional)",
+      "noteRequired": "Woher stammt das?",
+      "notePlaceholder": "z. B. Von der Produktseite des Verlags",
+      "send": "Senden",
+      "sending": "Wird gesendet…",
+      "cancel": "Abbrechen",
+      "applied": "Gesendet und in Grimoire Codex DB sichtbar.",
+      "pending": "Gesendet. Es wartet in Grimoire Codex DB auf Prüfung.",
+      "viewEdit": "Änderung ansehen"
+    },
+    "fields": {
+      "authors": "Autor:innen",
+      "artists": "Illustrator:innen",
+      "publisherUrl": "Verlagslink",
+      "pageCount": "Seitenzahl",
+      "explicit": "Explizit",
+      "systemAgnostic": "Systemunabhängig",
+      "onePage": "Einseitig"
+    }
   },
   "share": {
     "button": "Teilen",

@@ -13,6 +13,10 @@ repo. There are two kinds:
 Keeping definitions out of this repo means a source that changes its layout can
 be fixed by a community PR, not a Grimoire release.
 
+[Grimoire Codex DB](codex.md), the community catalogue, is not an add-on: it is
+built in and needs no install. Once `GRIMOIRE_CODEX_DB_API_TOKEN` is set, it appears first in
+**Fetch metadata** alongside any add-ons you install.
+
 ## Using them
 
 **Settings → Add-ons** (admin only). Add-ons are grouped by what they do, under
@@ -23,8 +27,9 @@ alongside them.
 1. **Refresh** fetches the index from the configured URL (defaults to the
    community repo).
 2. **Install** the add-ons you want. They land in `DATA_PATH/add-ons/<id>/`.
-3. Open a game system or a book → **Edit** → **Fetch metadata**, or for an
-   importer, **Characters → Import a character**.
+3. Open a game system or a book → **Edit** → **Fetch metadata** (in the reader,
+   a book's details panel → pencil → **Fetch metadata**), or for an importer,
+   **Characters → Import a character**.
 
 Each scraper declares a `target` - `game-system` or `book` - and only appears in
 the editor for that kind of thing. An importer's target is `character`; once

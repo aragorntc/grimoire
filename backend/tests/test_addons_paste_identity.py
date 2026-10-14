@@ -38,6 +38,12 @@ BASE = {
     "map": {"license": {"from": "license"}},
 }
 
+@pytest.fixture(autouse=True)
+def codex_off(monkeypatch):
+    """These tests are about add-ons: keep the built-in Grimoire Codex DB source out of the lists."""
+    monkeypatch.delenv("GRIMOIRE_CODEX_DB_API_TOKEN", raising=False)
+
+
 
 def _manifest(pattern=r"/product/(\d+)", **overrides):
     data = {**BASE}

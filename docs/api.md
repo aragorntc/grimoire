@@ -128,6 +128,7 @@ A permission is an area of the API, taken from each endpoint's OpenAPI tag:
 | `files` | `files` | The library file manager |
 | `duplicates` | `duplicates` | Duplicate detection and resolution |
 | `addons` | `addons` | Community metadata add-ons |
+| `codex` | `codex` | Grimoire Codex DB connection settings, sending and unlinking records |
 | `maintenance` | `maintenance` | Metadata sidecar settings and export |
 | `backups` | `backups` | Backups and the backup schedule |
 | `logs` | `logs` | Application logs |
@@ -454,7 +455,7 @@ must be non-empty (`422` otherwise).
 | `/api/systems/:id/book-folders` | PATCH | gm/admin | Create or replace a folder's tag list. Body `{path, tags}`. `path` must be `{system_id}/{category}/{subfolder…}` for this system - 400 otherwise |
 | `/api/systems/:id/book-folders` | DELETE | gm/admin | Delete a folder row and its tags. Query: `path` (same grammar as PATCH). 404 when no such row |
 
-**PATCH fields:** `name`, `slug`, `description`, `publishers`, `character_builder_url` (legacy), `character_builder_urls`, `urls`, `cover_image`, `cover_book_id`, `tags`, `genre` (legacy), `genres`, `dice_materials`, `system_family`, `parent_system`, `edition`, `license`, `year`, `is_explicit`, `access_level` (**admin only**; `""`/`"gm"`/`"admin"` - a system has no `inherit` state. See [Access levels](#access-levels-issue-258))
+**PATCH fields:** `name`, `slug`, `description`, `publishers`, `character_builder_url` (legacy), `character_builder_urls`, `urls`, `cover_image`, `cover_book_id`, `tags`, `genre` (legacy), `genres`, `dice_materials`, `system_family`, `parent_system`, `edition`, `license`, `year`, `is_explicit`, `codex_id` (the linked [Grimoire Codex DB](#grimoire-codex-db-issue-35) record; unlink with `DELETE /api/codex/systems/:id/link`), `access_level` (**admin only**; `""`/`"gm"`/`"admin"` - a system has no `inherit` state. See [Access levels](#access-levels-issue-258))
 
 **Publishers format:** `[{"name": "Publisher Name", "url": "https://..."}]`
 
@@ -470,9 +471,14 @@ must be non-empty (`422` otherwise).
 
 #### Metadata lookup from add-ons (issue #203)
 
+Sources are [Grimoire Codex DB](codex.md), built in and listed first while it is
+configured and enabled (`id: "grimoire-codex"`; needs `GRIMOIRE_CODEX_DB_API_TOKEN`), followed
+by installed add-ons. See
+[Grimoire Codex DB](#grimoire-codex-db-issue-35) for how Grimoire Codex DB results differ.
+
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/systems/:id/metadata-sources` | GET | gm/admin | Installed, enabled add-ons that can supply game system metadata. Returns `{sources: [{id, name, description, homepage, attribution, supports_paste}]}` |
+| `/api/systems/:id/metadata-sources` | GET | gm/admin | Grimoire Codex DB (when enabled) and installed, enabled add-ons that can supply game system metadata. Returns `{sources: [{id, name, description, homepage, attribution, supports_paste}]}` |
 | `/api/systems/:id/metadata-search` | POST | gm/admin | Ranked candidates from one source. Body `{source_id, query?}` - a blank `query` defaults to the system's own name. Returns `{query, results: [{identity, label, score, url}]}` |
 | `/api/systems/:id/metadata-fetch` | POST | gm/admin | One candidate's fields, diffed against the system. Body `{source_id, identity?, query?, paste?}`. Returns `{source_id, identity, url, attribution, fields}` |
 
@@ -519,7 +525,7 @@ does not support pasting, and a request with neither `identity` nor `paste`.
 |----------|--------|------|-------------|
 | `/api/books` | GET | any | Paginated book list. Query: `system_id`, `category`, `limit` (max 500, default 100), `offset`, `sort` (`title` - the default - or `added_at`), `order` (`asc`/`desc`; defaults to A-Z for `title` and newest first for `added_at`), `added_since` (ISO-8601; see below) |
 | `/api/books/:id` | GET | any | Book detail with game system |
-| `/api/books/:id` | PATCH | gm/admin | Update: `title`, `category`, `description`, `authors`, `artists`, `genres`, `publisher`, `publisher_url` (legacy), `urls`, `isbn`, `product_code`, `version`, `language`, `license`, `year`, `month` (1–12), `day` (1–31), `tags`, `is_explicit`, `access_level` (**admin only**). `license` overrides the system license for this book (blank inherits it). Changing `category` also **moves the file** - see below. `file_size`/`page_count`/`mime_type` are read-only. Sending `access_level` as a non-admin returns 403 - see [Access levels](#access-levels-issue-258). |
+| `/api/books/:id` | PATCH | gm/admin | Update: `title`, `category`, `description`, `authors`, `artists`, `genres`, `publisher`, `publisher_url` (legacy), `urls`, `isbn`, `product_code`, `version`, `language`, `license`, `year`, `month` (1–12), `day` (1–31), `tags`, `is_explicit`, `codex_id`, `access_level` (**admin only**). `license` overrides the system license for this book (blank inherits it). Changing `category` also **moves the file** - see below. `file_size`/`page_count`/`mime_type` are read-only. Sending `access_level` as a non-admin returns 403 - see [Access levels](#access-levels-issue-258). |
 | `/api/books/bulk` | POST | gm/admin | Bulk update. Body: `{items: [{id, ...PATCH fields}]}` |
 | `/api/books/bulk/tags` | POST | gm/admin | Bulk **add** tags. Body: `{ids, tags}` |
 | `/api/books/:id/reindex` | POST | gm/admin | Re-run OCR on a scanned book. Optional query `ocr_dpi` (72–600) re-reads this book at a higher resolution than the global `OCR_DPI`; omit for the default. Clears the book's search index and re-queues it (OCR runs in the background - poll `/api/scan-status`). 400 if the book has an embedded text layer (nothing to OCR). Returns `{status: "reindex_queued", ocr_dpi}`. |
@@ -595,7 +601,7 @@ its existing shares.
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/books/:id/metadata-sources` | GET | gm/admin | Installed, enabled add-ons that can supply book metadata |
+| `/api/books/:id/metadata-sources` | GET | gm/admin | Grimoire Codex DB (when enabled) and installed, enabled add-ons that can supply book metadata |
 | `/api/books/:id/metadata-search` | POST | gm/admin | Ranked candidates. Body `{source_id, query?}` - a blank `query` defaults to the book's title |
 | `/api/books/:id/metadata-fetch` | POST | gm/admin | One candidate's fields, diffed against the book. Body `{source_id, identity?, query?, paste?}` |
 
@@ -1764,6 +1770,46 @@ Someone else's key is a `404` for everything but an admin's delete - nobody,
 admins included, can edit or mint a secret for a key that isn't theirs. `400`
 for an unknown permission, a level your role doesn't offer, a blank name, or an
 expiry in the past.
+
+### Grimoire Codex DB (issue #35)
+
+[Grimoire Codex DB](codex.md) is the built-in community metadata source. It exists
+only on a server with `GRIMOIRE_CODEX_DB_API_TOKEN` set. Without it the source is not listed,
+`/api/codex/status` reports `enabled: false`, and every other `/api/codex/*`
+endpoint answers `404`. Looking a record up uses the metadata endpoints above with
+`source_id: "grimoire-codex"`:
+
+- **Book search** goes to Grimoire Codex DB's `/match` with everything known about the book
+  (title, file name, ISBN, product code, authors, publisher, system name, year,
+  page count, and the file's SHA-256 when *Send file hashes* is on). A non-blank
+  `query` that differs from the title sends only the query and the system name.
+  Each result's `label` ends with why it matched; `score` is Grimoire Codex DB's confidence (0-1).
+- **System search** is a name search.
+- **`paste`** accepts a Grimoire Codex DB link (`…/books/{id}`, `…/systems/{id}`) or a bare id.
+- **Fetch** diffs the Grimoire Codex DB record's fields plus `codex_id`. Applying `codex_id`
+  through `PATCH /api/books/:id` or `PATCH /api/systems/:id` links the record.
+  Category, page count and file size are never offered.
+
+Grimoire Codex DB failures map to: `400` when Grimoire Codex DB is not configured, turned
+off, or rejects the token, `404` when the record is not in Grimoire Codex DB, Grimoire Codex DB's own `4xx` (e.g. `422` with
+its validation message) when it refuses a submission, and `502` when it cannot be
+reached or fails.
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/codex/status` | GET | not guest | `{enabled, url}` - whether Grimoire Codex DB is on (`GRIMOIRE_CODEX_DB_API_TOKEN` is set), and where it is. Always answers, so the UI knows whether to show anything |
+| `/api/codex/settings` | GET | admin | `{url, send_hashes, locked}`. The token is never returned. `locked` lists settings pinned by a `GRIMOIRE_CODEX_DB_*` environment variable |
+| `/api/codex/settings` | PUT | admin | Body `{url?, send_hashes?}`. The token can only be set through `GRIMOIRE_CODEX_DB_API_TOKEN`. `400` for an invalid URL or a pinned setting. Returns the settings |
+| `/api/codex/test` | POST | admin | Reaches Grimoire Codex DB with the token. Returns `{ok, url, account}`, where `account` is `{name, role}` for the token's Grimoire Codex DB account. `400` if Grimoire Codex DB rejects the token |
+| `/api/codex/books/:id/submit` | POST | gm/admin | Send a book. Body `{fields?, note?}`. Unlinked: creates a Grimoire Codex DB record under the book's system's Grimoire Codex DB record (`400` if the system is not linked). Linked: sends `fields` as a correction (default: every sendable field). Returns `{status, codex_id, linked, edit_url}`, `status` being `applied` or `pending` |
+| `/api/codex/systems/:id/submit` | POST | gm/admin | The same for a game system |
+| `/api/codex/books/:id/link` | DELETE | gm/admin | Clear the book's `codex_id`. Nothing changes in Grimoire Codex DB |
+| `/api/codex/systems/:id/link` | DELETE | gm/admin | Clear the system's `codex_id` |
+
+A new record that waits for review is not linked (`linked: false`): it exists in
+Grimoire Codex DB only once approved. Book and system detail responses, and the books listed
+in a system, carry `codex_id` (`null` when unlinked). For API keys these endpoints
+fall under the `codex` permission.
 
 ### Share links
 

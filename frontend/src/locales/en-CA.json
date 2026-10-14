@@ -1408,6 +1408,10 @@
           "label": "Add-ons",
           "description": "Community metadata add-ons: install, update, enable, run"
         },
+        "codex": {
+          "label": "Grimoire Codex DB",
+          "description": "Grimoire Codex DB connection settings, and sending and unlinking records"
+        },
         "maintenance": {
           "label": "Maintenance",
           "description": "Metadata sidecar settings and export"
@@ -2247,7 +2251,8 @@
     "replaceCover": "Replace image",
     "removeCover": "Remove",
     "coverUploadFailed": "Upload failed",
-    "folderCoverInUse": "A cover image found in this system's library folder is being used. Remove it from the folder to use an upload instead."
+    "folderCoverInUse": "A cover image found in this system's library folder is being used. Remove it from the folder to use an upload instead.",
+    "codex_id": "Grimoire Codex DB link"
   },
   "bookEditor": {
     "title": "Edit Book",
@@ -3469,6 +3474,50 @@
     "document": "Ruleset (JSON or YAML)",
     "documentHelp": "An exported ruleset, or one written by hand. It needs an \"entries\" section grouped by content type.",
     "needRulesetFirst": "Create a ruleset to import into first"
+  },
+  "codex": {
+    "settings": {
+      "title": "Grimoire Codex DB",
+      "description": "The community catalogue of TTRPG systems and books, built into Grimoire. Fetch metadata can look records up there, and applying a result links the record to it.",
+      "url": "Grimoire Codex DB address",
+      "urlHint": "Change this only to use a self-hosted Grimoire Codex DB.",
+      "sendHashes": "Send file hashes when looking up books",
+      "sendHashesHint": "Identifies a book exactly, even with a messy file name, but tells Grimoire Codex DB which files this library holds.",
+      "tokenFromEnv": "Uses the API token set in GRIMOIRE_CODEX_DB_API_TOKEN. Everything sent is credited to that token's Grimoire Codex DB account.",
+      "test": "Test connection",
+      "connected": "Connected.",
+      "connectedAs": "Connected as {{name}} ({{role}})",
+      "lockedBy": "Set by {{name}} in the environment."
+    },
+    "panel": {
+      "title": "Grimoire Codex DB",
+      "linked": "Linked · view on Grimoire Codex DB",
+      "notLinked": "Not linked. Use Fetch metadata to find it in Grimoire Codex DB.",
+      "sendCorrection": "Send corrections",
+      "add": "Add to Grimoire Codex DB",
+      "unlink": "Unlink",
+      "chooseFields": "Which fields should Grimoire Codex DB take from this library?",
+      "addBookHint": "This creates the book in Grimoire Codex DB, under its game system's Grimoire Codex DB record, for everyone to see. Depending on your Grimoire Codex DB account it may wait for review.",
+      "addSystemHint": "This creates the system in Grimoire Codex DB for everyone to see. Depending on your Grimoire Codex DB account it may wait for review.",
+      "noteOptional": "Note for reviewers (optional)",
+      "noteRequired": "Where is this from?",
+      "notePlaceholder": "e.g. From the publisher's product page",
+      "send": "Send",
+      "sending": "Sending…",
+      "cancel": "Cancel",
+      "applied": "Sent and live on Grimoire Codex DB.",
+      "pending": "Sent. It waits for review on Grimoire Codex DB.",
+      "viewEdit": "View the edit"
+    },
+    "fields": {
+      "authors": "Authors",
+      "artists": "Artists",
+      "publisherUrl": "Publisher link",
+      "pageCount": "Page count",
+      "explicit": "Explicit",
+      "systemAgnostic": "System-agnostic",
+      "onePage": "One-page"
+    }
   },
   "share": {
     "button": "Share",
