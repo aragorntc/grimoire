@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release candidates are omitted; their contents are rolled into the stable release that followed.
 
-## [Unreleased]
+## [1.9.0] - 2026-10-15
 
 ### Added
 
@@ -33,8 +33,13 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - Cut out maps, tables, cards and tokens: draw rectangles, squares or circles on a page, or across both halves of a spread, and each one downloads as its own file - round tokens with transparent corners. Find shapes picks out every token or picture on a page for you
 - The PDF map viewer has the same Export button
 - Admins on a writable library can save an export straight into a library folder - beside the book, or into Tokens or Maps - instead of downloading it, and Grimoire indexes the new files right away
+- Grimoire Codex DB, the community catalogue of TTRPG systems and books, is built in as a metadata source. Set `GRIMOIRE_CODEX_DB_API_TOKEN` to turn it on: it is listed first in Fetch metadata, and applying a result links the book or system to its Grimoire Codex DB record
+- GMs and admins can add a book or system to Grimoire Codex DB, or send chosen fields as a correction to the linked record
+- Book lookups can include file hashes so Grimoire Codex DB finds the exact file - off by default, under Settings → Add-ons → Grimoire Codex DB
+- Fetch metadata from the reader's details panel, without leaving for the system page
 - Name the main version of a family instead of "Main version": a map pack whose main copy is the gridless cut can say Gridless. Admins rename any version - the main one included - from the version picker on a map, token, audio or 3D model page, or from a book's Versions section
 - Reviewing duplicates pre-fills what each copy is from its filename, for the copy you keep as well as the other - a `Tavern_nogrid` / `Tavern_grid` pair arrives as Gridless main, Gridded variant
+- A character sheet can let you type your own class, species or background when nothing in the catalogue fits, for homebrew picks (thanks @ianfhunter)
 
 ### Changed
 
@@ -605,7 +610,8 @@ Initial release. A self-hosted library manager for your TTRPG PDFs, battlemaps, 
 - Explicit content controls with per-user opt-in
 - Docker-first deployment
 
-[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/hunter-read/grimoire/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/hunter-read/grimoire/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/hunter-read/grimoire/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/hunter-read/grimoire/compare/v1.7.1...v1.7.2
