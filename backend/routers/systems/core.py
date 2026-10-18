@@ -1,9 +1,9 @@
 """Game system endpoint handlers."""
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query as OrmQuery, Session
 
 from ...auth import CurrentUser, get_current_user, require_gm_or_admin
 from ...config import get_db
@@ -53,7 +53,7 @@ def list_systems(
     # Per-system book count + total page count in one grouped query. Variants
     # are excluded so the card's count matches the number of rows the detail
     # view actually renders (issues #304, #306).
-    agg_q = db.query(
+    agg_q: OrmQuery[Any] = db.query(
         Book.game_system_id,
         func.count(Book.id),
         func.coalesce(func.sum(Book.page_count), 0),
@@ -194,9 +194,10 @@ def get_system(
         cover_book_id = system.cover_book_id
         if not cover_book_id and not system.container_kind:
             with_thumb = book_q.filter(Book.has_thumbnail == True)  # noqa: E712
-            auto = with_thumb.filter(Book.category == "core").with_entities(Book.id).first()
-            auto = auto or with_thumb.with_entities(Book.id).first()
-            cover_book_id = auto[0] if auto else None
+            cover_book_id = (
+                with_thumb.filter(Book.category == "core").with_entities(Book.id).limit(1).scalar()
+                or with_thumb.with_entities(Book.id).limit(1).scalar()
+            )
         summary = serialize_system_summary(
             system,
             book_count=int(count or 0),
