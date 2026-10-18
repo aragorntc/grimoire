@@ -8,6 +8,13 @@ Release candidates are omitted; their contents are rolled into the stable releas
 
 ## [Unreleased]
 
+### Added
+
+- **Join pages** in spread view draws the two pages as one image, with no gap, inner corners or shadow between them, so a map or illustration printed across a spread reads as one picture. It is under Spread in the reader's menu and a button in the PDF map viewer, and is remembered per book and per map
+
+### Fixed
+
+- Exporting a spread as one joined image could leave a faint light line down the middle at some page sizes and resolutions
 ### Changed
 
 - Grimoire uses much less memory: about 250 MB once your library is scanned, down from about 550 MB, and about half as much at peak while several people read
