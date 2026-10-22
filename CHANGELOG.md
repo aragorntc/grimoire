@@ -6,202 +6,126 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Release candidates are omitted; their contents are rolled into the stable release that followed.
 
-## [Unreleased]
+## [1.9.1] - 2026-10-22
 
 ### Added
 
-- **Grimoire watches the library for changes.** Add, rename, move or delete files on disk and they show up a few seconds later with no rescan, and a change inside one folder only rescans that folder. On a network share (NFS, SMB, FUSE) it checks regularly instead, since the share never reports changes made from another computer. It is on by default and set under Settings → Maintenance → Watch for Changes, which also shows what it is doing; `LIBRARY_WATCH` and `LIBRARY_WATCH_MODE` pin it, and `LIBRARY_WATCH_DELAY` and `LIBRARY_WATCH_POLL_INTERVAL` tune it. The scheduled rescan stays for servers that would rather scan at a quiet hour. See the file management docs
-- **Merge duplicates in one step.** Merging folds copies into the one you keep: blank fields are filled in, tags combined, and every bookmark, favourite, campaign link (with the players it was shared with), share link, access grant, soundboard entry and note embed moves across instead of being deleted with the other copy. What it will do is shown before you confirm, and the other files stay on disk unless you choose to delete them. Admins can merge two or more copies selected in any list - a system's books, maps, tokens, audio, 3D models, favourites, a tag's page or search results - and the duplicates page now reviews a whole group at once, moves straight on to the next group after each decision with Back and Skip, works from the keyboard (`1`-`4`, `M`, `L`, `D`, `S`, `?`), merges a row without opening it, and merges every byte-identical group behind one confirmation. The list can be filtered by collection and by how sure the match is. See the file management docs
-- The users list shows when each person was **last active**, fading as it ages so the ones who have drifted away stand out; expand a user for when they last signed in. Log lines now carry the user whose request produced them, sign-ins are logged, and Settings → Logs can be narrowed to one user from a picker, a name on a log line, or **View in logs** on the user. See the users and permissions docs
-
-- Add-on sources can be private repositories. Give a source an access token under Settings → Add-ons (the key beside it) and its add-ons, character sheets, content packs, themes and note templates browse, install and update like a public catalogue's. The token is sent only to files inside that source, never to other sites, and is stored encrypted and never shown again. `ADDON_INDEX_CREDENTIALS` pins tokens on the server. See the add-ons docs for GitHub and Gitea setups
-- **Join pages** in spread view draws the two pages as one image, with no gap, inner corners or shadow between them, so a map or illustration printed across a spread reads as one picture. It is under Spread in the reader's menu and a button in the PDF map viewer, and is remembered per book and per map
-- The reader zooms up to 800%, from 200%. Past about 200% Grimoire renders just the part of the page you are looking at in full detail and lays it over the page, so small print stays sharp without rendering a huge image of the whole page
-- Zoom now stays when you turn the page, landing at the top of the next page in the same column. A new book, switching between Page and Spread, or reset returns to 100%
-- When linking resources to a campaign, tick a folder to select everything in it, subfolders included. A partly selected folder shows a dash, and ticking it again clears it
-- Password rules: new account passwords need at least 12 characters and new share-link passwords at least 8, and commonly used passwords are refused (checked against a list that ships with Grimoire, nothing leaves your server). Set `PASSWORD_MIN_LENGTH` and `SHARE_LINK_PASSWORD_MIN_LENGTH` to change the minimums. Passwords you already have keep working. Scripts that create users through the API are held to the same rules
-- Failed sign-ins are also counted per account, and wrong share-link passwords per link, whatever address they come from (`ACCOUNT_RATE_LIMIT`, default `20/hour`). A browser you have signed in from before keeps its own count
-- `TRUSTED_PROXIES` lists the reverse proxies whose `X-Forwarded-For` Grimoire reads. The default covers proxies and tunnels on the same host, Docker network or LAN, so most installs need no change. If a proxy reaches Grimoire from a public address - a VPS, or Cloudflare's proxy without Cloudflare Tunnel - add its addresses; see the security docs
-- Book pages are now rendered in a separate process, so a damaged PDF that crashes the PDF library fails that one page instead of stopping Grimoire. The same goes for a book's table of contents and for exporting pages and cut-outs. `RENDER_WORKERS` sets how many render processes run (default `1`); more render different books in parallel on multi-core hosts, and `0` keeps rendering inside Grimoire. Render processes stop when nobody is reading. See the performance docs
-- Character sheets can hold pictures besides the portrait - a knight's coat of arms, a ship. A sheet declares an `image` field and places it like any other; you add, replace or remove the picture right on the sheet. Sheets can also place the character's art itself with `<g-portrait>`, and the D&D 5e (2024) sheet now shows it large on its Spells & Details page
-- Click a character's art to see it large. On your own character you can choose its framing there - click or drag to pick the part that stays in view, and zoom in - and the header, the Characters list and the sheet all keep that part showing, so tall art no longer loses its head
-- Character exports carry the character's art, its framing and any other pictures on the sheet, and importing restores them
-- Players can let their campaign's GM edit their character. Tick **Let the GM edit** in the sheet's header and the GM can change the sheet's values, the character's name and its pictures, whatever sheet it is built on. It is off by default, other players at the table still only read the sheet, and moving the character to another campaign turns it off again
-- Folder naming patterns, under Settings → Metadata: describe how the books in a folder are named - `{system} - [{publisher}] - {*} - {title}< (v{version}, {year})>`, say - and new books there take their title, publisher, version and year from the filename instead of showing the whole name. A preview lets you re-title the books already there, and a pattern without `{*}` can also rename files to match, or move a folder onto a new naming scheme. Renamed books keep their tags, progress and sidecars, and nothing is renamed unless you choose to. A pattern holds up to 20 fields, and reading a name stays quick however many of them are `{*}`. See the filename rules docs
-- A campaign's page lists the characters played in it, grouped under each player, with the GM's own first - so a GM can keep NPCs, or a solo game's party, with the campaign. Each player's current character shows; their retired and fallen ones fold away behind a "past characters" toggle. **Add character** brings one of your own characters to the table from there
-- Variant filename rules, under Settings → Metadata: teach duplicate detection your own markers - `GL_` for gridless, `-pf` for printer friendly, `night` for a label - and it pre-fills them ahead of the built-in ones
-- The reader shows the book's game system before its title, as a link to that system's page. A book opened from a link shared elsewhere, with nothing to go back to, is now one click from the rest of its system
-- `STARTUP_SCAN=false` skips the library scan Grimoire runs every time it starts, for very large libraries where a restart for an image update or a setting change shouldn't mean a long scan. New files are then found by a manual or scheduled rescan. See the configuration docs
+- Grimoire watches the library and picks up added, renamed, moved or deleted files within seconds, without a rescan. Network shares are checked on a timer. Set under Settings → Maintenance → Watch for Changes
+- Merge duplicates in one step: the copy you keep takes the others' metadata, tags, bookmarks, favourites, campaign links and share links, and the files stay on disk unless you delete them
+- Admins can merge copies selected in any list, and the duplicates page reviews a group at a time, works from the keyboard, and merges every byte-identical group at once
+- Folder naming patterns under Settings → Metadata read a book's title, publisher, version and year from its filename, and can re-title or rename existing books
+- Variant filename rules teach duplicate detection your own markers, such as `GL_` for gridless
+- The users list shows when each person was last active, and Settings → Logs can be filtered by user
+- Private add-on sources, with an access token per source
+- The reader zooms up to 800% and keeps your zoom when you turn the page
+- **Join pages** shows a spread as one seamless image, for maps printed across two pages
+- The reader shows the book's game system as a link to its page
+- Character sheets can hold more pictures than the portrait, and a character's art can be viewed large and reframed
+- Players can let their campaign's GM edit their character
+- A campaign's page lists its characters by player, with **Add character** to bring one of yours
+- Tick a folder when linking campaign resources to select everything in it
+- Password rules for new passwords: at least 12 characters, or 8 for share links, and no common passwords. Existing passwords keep working
+- Failed sign-ins are limited per account as well as per address (`ACCOUNT_RATE_LIMIT`)
+- `TRUSTED_PROXIES` names the reverse proxies whose `X-Forwarded-For` is trusted; the default covers the same host, Docker network and LAN
+- Book pages render in a separate process, so a damaged PDF fails one page instead of crashing Grimoire (`RENDER_WORKERS`)
+- `STARTUP_SCAN=false` skips the scan on start-up, for very large libraries
+- Docker images are also published to `ghcr.io/hunter-read/grimoire`
 
 ### Changed
 
-- Exporting pages or cut-outs as images is limited to 250 megapixels in one export - about 28 pages at Print resolution, or all 100 allowed pages at Standard - and an export over the limit, or with one image over 50 megapixels, is refused straight away instead of partway through. Exports as PDF are unaffected
-- Book pages open faster from campaign notes and search. While a note is open, the book pages it links to start rendering in the background, a few at a time and at most eight per note. In search, resting the pointer on a page result for a moment, or pressing it, starts that page loading before the click lands. A page that two requests ask for at once now renders once instead of twice
-- Grimoire uses much less memory: about 250 MB once your library is scanned, down from about 550 MB, and about half as much at peak while several people read
-- The image runs one worker by default (`WORKERS=1`), and one worker now serves several readers at once faster than two did before. If your compose file sets `WORKERS=2` from an older example, change it to `1` to get the saving; the performance docs explain when two is worth it
-- After a reading session, Grimoire closes the books it had open and gives back the memory used to render their pages once nobody has read anything for 5 minutes. `PAGE_IDLE_RELEASE` sets how long it waits; `0` turns this off
-- Faster first start for a new or updated container: the image now ships the compiled Python it needs instead of building it on first start
-- Updated FastAPI, Pydantic and Uvicorn. API keys keep exactly the access they had
-- Updated Pillow, the image library behind covers, thumbnails and uploaded pictures, to 13.0
-- The image builds its frontend with Node 22, the version CI tests with; Node 20 is end of life. Running from source now needs Node 22 or newer
-- The MCP server now runs on the official MCP Python SDK instead of Grimoire's own protocol code, and also accepts the older `2024-11-05` protocol revision. Tools, resources, prompts and API-key permissions are unchanged
-- The MCP server also speaks the `2026-07-28` protocol revision, the stateless one with no `initialize` step, so newer assistants connect on it. Older revisions still work, and tools, resources, prompts and API-key permissions are unchanged
-- Updated the frontend to React 19, along with its build, test and lint tooling
-- For contributors: the frontend is moving to TypeScript. Its API client is now typed from the backend's OpenAPI schema, so a change to a request or response shows up as a type error in the same pull request, and new or changed frontend files are written in TypeScript. See the TypeScript docs
-- Replacing books' files by upload one after another no longer fails while the previous replace is being re-indexed. Each replace queues its book for one background re-index that reads every replaced book in turn, so a script or `grimoire-cli files upload --on-conflict replace` can send a whole batch back to back. Re-indexing a single book from its page uses the same queue, so it no longer blocks replaces either, and is no longer skipped while one runs. A replace still waits out a library scan or OCR run, and a book the re-index is reading at that moment
-- For contributors: importing a backend module no longer starts Grimoire. `backend.config` only reads settings; creating the data folders, migrating the database and connecting to Valkey happen in `config.startup()`, which the app runs as it starts. Scripts and workers can import settings without touching the database. See the architecture docs
-- For contributors: the database models are declared with SQLAlchemy 2.0's typed `Mapped[...]` columns, and mypy now runs with all of its error checks on. The schema itself is unchanged
-- `X-Forwarded-For` is read only from a trusted proxy, right to left, so each client behind your proxy gets its own address in rate limiting and Active Sessions. A working API key is never refused because its address is over the failed-key limit
-- Sign-in rate limiting counts an IPv6 client by its `/64` network, since one host usually holds a whole `/64`. Private IPv6 addresses are still counted one by one. The security docs now explain that on Docker Desktop and rootless Podman or Docker without a proxy, every client arrives from a private address and is trusted to name its own in `X-Forwarded-For`, and recommend `TRUST_FORWARDED_FOR=false` there
-- Requests from GM and admin accounts check the account's current role every time, so a role change, a deleted account or signing a device out applies straight away. A guest's session ends once guest access is turned off or the guest is removed, and deleting a campaign removes its guest accounts
-- Single sign-on's **Match Existing Users By** now links only accounts that aren't linked to a provider yet, and while it matches by email only an admin can change a user's email. See the OIDC docs for the details
-- Matching existing users by username never links an admin account. An admin who wants to sign in through the provider can match by email instead. Username matching is meant for providers where users can't choose or change their own username; see the OIDC docs
-- **Check your single sign-on group names before upgrading.** With a Groups Claim set, roles now come only from groups named exactly `admin`, `gm` and `player` (ignoring case), or Keycloak's `/admin` form of a top-level group. Groups that merely end in a role name, such as `grimoire-admin`, no longer grant that role, and someone in none of the role groups is turned away at sign-in as before. If your provider's groups are named differently, enter their names under Settings → Authentication (**Admin group**, **GM group**, **Player group**) or pin them with `OIDC_ADMIN_GROUP`, `OIDC_GM_GROUP` and `OIDC_PLAYER_GROUP` before upgrading. See the OIDC docs
-- Single sign-on's **Signing Algorithm** no longer offers HS256. ID tokens are checked against the provider's published keys, which an HS256 token can't be, so it never worked. If yours is set to HS256 (in Settings or with `OIDC_SIGNING_ALG`), sign-in now says the algorithm isn't supported until you pick another - usually RS256. Tokens are verified with only the chosen algorithm, and one in any other algorithm is turned away with a sign-in error rather than a server error
-- **Check your `SECRET_KEY` before upgrading.** Grimoire refuses to start with a `SECRET_KEY` copied from its old install guide or development compose file, and logs a warning for one shorter than 32 characters. If yours was copied, replace it with the output of `openssl rand -hex 32`, or remove it so Grimoire generates and keeps its own. Changing the key signs everyone out and ends existing OPDS and calendar feed URLs and share links, which then need making again. The install guide no longer shows an example key
-- At start-up the container only changes the owner of the data folder and a `BACKUP_DIR` set in its environment; a backup folder chosen in Settings is checked and reported in the log instead
-- For contributors: GitHub Actions are pinned to commit SHAs, and the release workflow publishes the GitHub release from its own job
-- For contributors: CI tests against a pinned commit of the community add-ons repo rather than its latest `main`, and the coverage badges are published by a job of their own that runs no repository code, so the test jobs no longer hold the badge token. The pipelines docs explain how to move the pin
-- For contributors: CI and CodeQL no longer run for the retired `dev` branch
-- Campaign wiki pages an assistant writes are always private to you, as are any pages its links create; share them from the wiki when you want your table to see them. The `create_wiki_page` tool no longer takes a `visibility` argument. New wiki pages can't be added to a campaign while its GM's campaign access is turned off, in the app or by an assistant
-- Campaign files download with a type based on their file extension
-- Passwords, email addresses, the admin role, sign-in settings, add-on sources and script approval, and guest invite codes are changed only from a signed-in session, not with an API key; a key's other access is unchanged. A share link made with a key also needs the key to have Read on that item's area (Books, Maps, Tokens, Audio or Models). See the API docs
-- Signing in with single sign-on no longer puts an access token in the page address. Grimoire sets the session cookies and sends you back where you were, and the app picks the session up from them, as it does when you return to Grimoire later. Sign-in errors from your provider show a standard message for its error code
-- Requests that change something need the `Authorization` header the app sends, or an API key. The session cookie and the deprecated `?token=` parameter now count only for viewing and downloading. Scripts that relied on the cookie for changes need to send the header
-- Turning explicit content off for a user is now a restriction they can't lift: when an admin, the `denyExplicit` seed setting or the OIDC `viewNSFW` permission turns it off, the user's own setting can no longer turn it back on (it shows why). Users can still turn it off for themselves at any time. Users who already have explicit content off start out restricted this way, since Grimoire can't tell who turned it off; an admin can turn it on for anyone who chose it themselves
-- With explicit content off, search no longer shows explicit books, tokens or models, and an explicit book's details answer "not found", the same as for books you can't open. The same applies to an assistant using the MCP server
-- Sign-in cookies are marked HTTPS-only whenever the request arrived over HTTPS - directly or through a trusted proxy - not only when `BASE_URL` starts with `https://`. The install guide now explains `BASE_URL`
-- The example Docker Compose files now give Valkey a password. If you run Valkey from one of them, add `--requirepass` to the Valkey service and the password to `VALKEY_URL` (`redis://:<password>@valkey:6379/0`); see the configuration docs
-- The OIDC client secret entered in Settings is stored encrypted under `SECRET_KEY`, so a backup doesn't carry it, and an existing one is converted on upgrade. If `SECRET_KEY` changes, single sign-on stops until the secret is entered again. Setting `OIDC_CLIENT_SECRET` instead is recommended
-- Users seeded from `users.json` follow the password rules, and an entry with a short or common password is skipped. Afterwards the file is kept as `users.json.imported` with password hashes in place of plaintext. The passwords in `users.json.example` must now be replaced before it imports anything
-- Links on books, game systems and publishers, and campaign members' character sheet links, must be `http://` or `https://`. Wiki links and images keep `http(s)`, `mailto:` and relative links, and wiki embeds with a malformed id are ignored
-- The admin-only lists of every user's share links can't be read with an API key
-- A map's grid can't claim cells smaller than 4 pixels, and OTFBM backgrounds are capped at 16383 pixels per side and 100 megapixels
-- A wiki imported as a `.zip` is held to the import limits once unpacked (25 MB and 2000 files), not only as uploaded
-- Single sign-on reads the provider's userinfo only when it describes the same user as the ID token, and takes an email address and whether it is verified from the same one of the two
-- Calibre `.opf` sidecars are read with a parser that refuses entity declarations
-- Access tokens are no longer accepted in the page address (`?token=`); the app had stopped using it, and images and downloads authenticate with the session cookie. The app now keeps its access token in memory rather than browser storage, and tabs take turns refreshing it
-- The interactive API docs and the OpenAPI schema need a signed-in account by default. `API_DOCS=public` serves them to anyone, as before, and `API_DOCS=off` turns them off
-- The MCP endpoint only answers under loopback, the host in `BASE_URL`, and hosts listed in the new `MCP_ALLOWED_HOSTS`. If an assistant connects to Grimoire at another address, such as a LAN IP, set `BASE_URL` or add it there
-- Usernames are unique regardless of case, matching how sign-in already compared them. If two existing accounts differ only in case, the log names them; rename one
-- Add-on index URLs must use `https://`, except on `localhost` or a private network address
-- Add-on scripts no longer see Grimoire's credentials in their environment, including private add-on index tokens (`ADDON_INDEX_CREDENTIALS`), other variables named as keys or credentials, and URLs with a password in them
-- Changing your own explicit-content setting needs a signed-in session rather than an API key
-- Pinned the remaining floating Python dependencies, and updated the bundled FFmpeg to 8.1.3, the newest release line that still gets fixes
-- For contributors: the development compose file tags its build `grimoire:dev`, so it no longer replaces a pulled image, and an image built from a working tree leaves out local databases, keys and seed files, `.env.*` files such as `frontend/.env.local`, and `*.pem`/`*.key` files. A container started with `PGID=0` logs a warning
-- For contributors: routes serve files through one helper that always applies the content policy, and tests now check that routers reading books or systems apply the access rules and that deleting a user handles every table that refers to one
-- With an OIDC permissions claim configured, a newly registered account whose claim has no `viewNSFW` now starts with explicit content off and locked, instead of allowed. Send `"viewNSFW": true` to grant it. Existing accounts keep their current setting when the key is missing
-- Passwords are hashed with bcrypt directly instead of through the unmaintained passlib library, in the same format, so every existing password and share-link password keeps working. The FAQ's password-reset command and the command for pre-hashing a password in a users file have changed to match
-- For contributors: the database the migrations build now matches the models exactly, and the backend tests run `alembic check` against a freshly migrated database, so a model change without its migration (or the reverse) fails CI. On upgrade, personal rulesets of accounts that no longer exist and share links without a stored token - neither of which anyone could reach - are removed. See the architecture docs
+- **Check your single sign-on group names before upgrading.** With a Groups Claim set, only groups named exactly `admin`, `gm` and `player` grant roles; set other names under Settings → Authentication or with `OIDC_ADMIN_GROUP`, `OIDC_GM_GROUP` and `OIDC_PLAYER_GROUP`
+- **Check your `SECRET_KEY` before upgrading.** A key copied from the old docs or compose files, or the install guide's placeholder, stops Grimoire starting. Replace it with the output of `openssl rand -hex 32`, or remove it to have one generated
+- **Scripts that change things must send the `Authorization` header or an API key.** The session cookie only counts for viewing and downloading, and `?token=` is no longer accepted
+- **The example compose files give Valkey a password.** If you use one, add `--requirepass` to your Valkey service and the password to `VALKEY_URL`
+- Grimoire uses about half the memory, around 250 MB once scanned. The image now runs one worker, so change `WORKERS=2` from an older compose file to `1`
+- Book pages open faster from campaign notes and search results
+- Replacing several books' files back to back no longer fails while one re-indexes
+- New and updated containers start faster
+- Single sign-on only links accounts not yet linked to a provider, never links an admin by username, and no longer offers HS256
+- Passwords, emails, roles, sign-in settings, add-on sources and guest codes can't be changed with an API key
+- Explicit content turned off by an admin or OIDC can't be turned back on by the user, and explicit items are hidden from search
+- Role changes, deleted accounts and signed-out devices take effect straight away
+- Usernames are unique regardless of case
+- Users seeded from `users.json` follow the password rules, and the file is renamed `users.json.imported` afterwards
+- The MCP server runs on the official MCP SDK, supports newer protocol revisions, and only answers on known hosts (`MCP_ALLOWED_HOSTS`). Wiki pages an assistant writes are always private
+- The interactive API docs need a signed-in account unless `API_DOCS=public`
+- Image exports are capped at 250 megapixels
+- Add-on scripts no longer see Grimoire's credentials
+- Updated to React 19, Pillow 13.0 and FFmpeg 8.1.3, along with FastAPI, Pydantic and Uvicorn. Passwords are hashed with bcrypt directly instead of passlib, and stored passwords keep working. Running from source needs Node 22
+- For contributors: the frontend is moving to TypeScript, the models use typed `Mapped[...]` columns with full mypy checks, and CI checks the migrations against the models
 
 ### Fixed
 
-- Fetching metadata from Grimoire Codex DB with a malformed record id is now refused with a clear error rather than a server error
-- Sessions opened through single sign-on record the address they signed in from, so Settings → Active Sessions shows it as it does for a password sign-in
-- Single sign-on now finishes only in the browser that started it. If a sign-in's return link is opened somewhere else, it shows "sign-in was started in another browser"
-- Accounts whose username starts with a capital letter outside A-Z, such as `Émile`, can sign in with their password again, typed in any case. Usernames are now compared with full Unicode case folding everywhere - signing in, checking whether a name is taken, and single sign-on's username matching - so `Émile` and `émile` can no longer be created as two accounts. Existing accounts that differ only this way keep working, each reached by its exact spelling
-- Renaming a system's folder no longer leaves the old system behind as an empty "0 books" shelf. The system keeps its description, cover, tags, campaigns and access under the new name, and the same holds for a system inside a collection and for a renamed collection
-- Renaming a folder that holds two copies of the same file no longer shows every file twice, the old ones missing. Copies are told apart by filename
-- A folder renamed while a scan was stopped or the server restarted is recognised as a rename by the next scan, rather than leaving the old books missing beside new copies
-- Deleting a system's folder now removes the system on the next rescan even when its books had bookmarks, and one system kept by a campaign no longer stops the others from being removed
-- Deleting a system's folder in the file manager removes the system straight away, instead of leaving an empty shelf behind, and removing a system inside a collection from the database now works too
-- **Copy metadata** on the duplicate comparison page never appeared, because the list of fields it may copy was dropped from the server's response
-- **Stop** now stops the startup library scan when Grimoire runs more than one worker without Valkey. The request could reach a worker other than the one scanning, which ignored it and kept rescans of a single folder refused until the scan finished
-- With `OCR_CONCURRENCY` above `1`, **Stop** now ends text recognition after the books already in progress, rather than starting every queued book after it
-- Renaming a file to change only its capitalisation (`crystallica.pdf` to `Crystallica.pdf`) was refused as "already exists" on macOS and Windows
-- Search results in the reader's search sidebar showed apostrophes, quotes and ampersands as `&#x27;`, `&quot;` and `&amp;`
-- OPDS book covers didn't load in e-readers; they are now served under the feed's own token
-- Deleting a user, or merging a guest into an account, could fail when they had saved audio sets, installed themes or character importers, hidden wiki pages, or had made a wiki template
-- Merging a guest into an account failed when both had favourited the same item, saved a filter under the same name, answered availability for the same session date or written a note on the same session. The account you merge into now keeps its own copy, and keeps its default filter if both had one for the same view
-- Deleting a user or a campaign, removing a guest, or merging guests could be left half done if it failed partway: the user's sign-ins were already ended, a campaign was deleted without its guests, or the first accounts of a merge were folded in and the rest were not. Each now completes or changes nothing. Ending sign-ins after a password or role change, or a new guest code, also now saves together with that change
-- Signing in with single sign-on fetched the provider's discovery document on every sign-in when only the issuer was configured; it is now kept for an hour
-- With `VALKEY_URL` pointing at a cache that can't be reached, Grimoire could take about two minutes to start before falling back to the disk cache. It now gives up after a couple of seconds
-- Two people reading the same book at once no longer render its pages in the same PDF document simultaneously, which the PDF library does not support and which could crash the server. Opening a large PDF or EPUB also no longer holds up page loads for other books
-- Exporting a spread as one joined image could leave a faint light line down the middle at some page sizes and resolutions
-- The campaign resource picker's Models tab showed `campaignEditor.resources.type_model` instead of its name
-- The campaign resource picker offered tabs for maps, tokens, audio or models even when those sections were hidden in Settings, and adding by tag could add them
-- Reading more than ten books at once, or replacing a book's file while someone was reading it, could close the book under a page that was still loading and fail that page
-- The sidebar could flash the "Update available" banner on load for a version you had already dismissed
-- In the map, token, audio and model galleries, the Filters dialog closed after every change, so only one filter could be set at a time, and typing quickly in the search box could lose the end of what you typed while results reloaded. The gallery now stays on screen while new results load
-- On a GM-run campaign's Schedule tab, setting a player's availability failed instead of saving
-- A character sheet formula that was very long or deeply nested, produced a very large number, or read a field set to something like `1e999` could fail the sheet, or the schema install, with a server error, and a computed value that kept multiplying itself through a long chain could stall the server. Such a formula now gives its default value straight away
-- Downloads named after a campaign, book or file could fail when the name held an emoji or other non-Latin characters, or a quote
-- A tag containing both a `'` and a `"` broke the whole OPDS feed
-- Bookmarking a book that doesn't exist returned a server error; it now answers "not found", as does bookmarking a book you can't open
-- The custom login message is cleaned with a real HTML parser, so a quote inside a link can no longer change the link's other attributes, and the settings editor cleans a stored message again before showing it
-- Signing in with a username that doesn't exist takes as long as a wrong password
-- Backups now include character portraits, which they had left out
-- Deleting a character, or an account with characters, now deletes their art too, rather than leaving the files behind
-- Image uploads accept PNG, JPEG, WebP and GIF, as they always said, judged by the file itself rather than the type the browser reports. A TIFF, BMP or other image sent as one of those is refused instead of stored and turned into a thumbnail. This covers campaign banners, character art, tokens and sheets, campaign images, portraits and sheet pictures, system and audio covers, the sign-in button icon and portraits in imported characters. A campaign file chosen as a banner is held to the same formats; images from your library keep every format the library supports
-- A book or map page asked for at a width of zero or less is refused. Page widths run from 16 to 3000 pixels
-- Pasted sheets and rulesets, uploaded wiki templates and add-on files no longer accept YAML aliases (`*name`). A pasted sheet or ruleset, an imported wiki or an imported character file nested too deeply now gets a clear error instead of a server error
-- The file manager and folder naming patterns answer a path with a file or folder name over 255 bytes - longer than any filesystem allows - as an invalid path instead of a server error
-- Grimoire refused the example `SECRET_KEY` values from older docs but started with the install guide's `<paste the generated value here>` line left unedited. It now refuses that too, and any other `SECRET_KEY` written in angle brackets
-- A guest merged into several campaigns is no longer deleted outright when one of those campaigns is deleted, the GM removes them, or they leave it. They keep their other campaigns, with their characters and notes there, and stay signed in; only a guest left with no campaign is removed. If the campaign they lost held their invite code, a guest who left keeps that code, and one removed by the GM, with their campaign or with the GM's account gets a new code on a campaign they are still in, which that campaign's GM can share
-- A campaign only shows its game system to people who can see that system. A GM can link a system restricted to GMs, and its players now see the campaign without it rather than the system's name, and a campaign can't be linked to a system its creator can't see
-- Merging a guest that had access grants, API keys or share links failed with a server error. Those are now removed with the merged-away account rather than moved, and a guest's role can only be changed by converting it to a permanent user, since a guest with another role can't sign in with its code
-- Deleting a campaign left the characters played in it pointing at the deleted campaign. They now go back to being their players' own characters, with GM editing turned off, and characters already left that way are fixed on upgrade
+- Renaming a system's folder keeps the system and its books instead of leaving an empty shelf, and deleting one removes it cleanly
+- **Stop** reaches the startup scan with several workers, and stops OCR after the books in progress
+- Renaming a file to change only its capitalisation failed on macOS and Windows
+- Usernames such as `Émile` can sign in again
+- Deleting users and campaigns and merging guests either finishes or changes nothing, and a guest in several campaigns is kept until none are left
+- Deleting a campaign hands its characters back to their players
+- Two people reading the same book could crash the server
+- Grimoire took about two minutes to start when Valkey couldn't be reached
+- **Copy metadata** on the duplicate comparison page never appeared
+- Gallery filters closed after every change, and fast typing in search lost characters
+- Setting a player's availability on a GM-run campaign failed
+- OPDS covers didn't load in e-readers, and some tags broke the feed
+- Reader search snippets showed HTML entities such as `&amp;`
+- The campaign resource picker showed a translation key and offered sections hidden in Settings
+- Downloads named with an emoji or non-Latin characters failed
+- Backups now include character portraits, and deleting a character removes its art
+- A joined spread export could show a faint line down the middle
+- The "Update available" banner flashed for a dismissed version
+- Single sign-on sessions show their sign-in address and finish only in the browser that started them
+- Players no longer see a campaign's game system if they can't see that system
+- Malformed or oversized input gets a clear error instead of a server error
 
 ### Security
 
-- Grimoire no longer runs as root inside the container. It switches to an ordinary user before starting - by default whoever owns your library folder - so a flaw in a PDF or archive parser or a third-party add-on would not have root access. Existing installs need no changes: the first start hands your data folder to that user, and if that user couldn't reach something root could, Grimoire stays root and the log explains how to fix it. Set `PUID` and `PGID` to choose the user, or start the container with `--user`. Rootless Podman and Docker are unaffected
-- The image build now checks the `ffmpeg` source against a pinned checksum, pins its base images by digest, and no longer hides a failed Python dependency install
-- OPDS feed, calendar feed and share-link tokens are no longer stored in plaintext. The database holds a keyed hash to match requests on and an encrypted copy so you can still copy your links, both tied to `SECRET_KEY`, which backups do not contain - so a leaked backup no longer hands out working feeds or share links. Every URL already handed out keeps working: the upgrade converts them in place, then compacts the database once so the old values do not linger in it
-- Backups now contain only live data. The database used to be copied page by page, which carried deleted and overwritten rows along in the file's free space
-- The Valkey password no longer appears in the log when `VALKEY_URL` includes one
-- Changing `SECRET_KEY` now also ends every feed URL and share link, as it already did every session. Share links made under the old key show as **Lost**
+- Grimoire no longer runs as root in the container; existing installs need no changes, and `PUID`/`PGID` choose the user
+- Feed and share-link tokens are stored hashed and encrypted, so a leaked backup doesn't hand out working links
+- Backups contain only live data, not deleted rows
+- Image uploads are checked by content and limited to PNG, JPEG, WebP and GIF
+- The custom login message is cleaned with a real HTML parser, and unknown usernames take as long to reject as wrong passwords
+- Calibre `.opf` sidecars are parsed without entity declarations
+- The Valkey password no longer appears in the log
+- The image build verifies the FFmpeg source and pins its base images
 
 ## [1.9.0] - 2026-10-15
 
 ### Added
 
-- An MCP server, so AI assistants such as Claude Code can work with your library: search it, read and look at book pages, browse your systems and books, and read your campaigns' wiki and session notes - citing the book and page they found an answer on. Off by default: set `MCP_ENABLED=true`, then connect with an API key, which decides what the assistant can reach
-- Assistants can also add to your library when you ask: bookmark a page, tag books, or write a new campaign wiki page (private unless you say to share it). They never change or delete what's there
-- Two ready-made assistant prompts: prep your next session from a campaign's notes and wiki, and answer rules questions from your own books with the page they're on
-- With MCP on, the dialog that shows a new API key also gives the command to connect Claude Code with it
-- Share links: a public link to a book, map, token, audio track or 3D model that anyone can open without an account, until it expires or you revoke it
-- A share link can expire after 1 day up to a year, or never, can require a password, and has a direct file address for VTTs and Discord
-- See, copy and revoke your share links under Settings → Account → Sharing
-- Admins choose who may create share links: GMs by default, players once allowed, and any user can be allowed or denied individually from the Users page, where their links are listed and can be revoked
-- `SHARE_LINKS_ENABLED=false` turns share links off for the whole server
-- Set a map up for OTFBM, the battle map renderer behind Avrae's `!map` on Discord: Grimoire resizes the map to OTFBM's grid, serves it through a share link, and gives you the command to paste
-- Import characters from other tools - a Forge Steel hero, a Pathbuilder 2e export, a D&D Beyond or DiceCloud link - through character importers: community add-ons an admin installs under Settings → Add-ons → Character importers. Characters → Import a character recognises the file by itself, builds it on the right sheet (installing the sheet if needed), and matches picks against your installed content, keeping anything it lacks as a custom entry (thanks @ianfhunter)
-- Anyone can install an importer that only reads uploaded files - Forge Steel and Pathbuilder included - for their own account, from the import dialog. Importers that fetch links or run scripts still need an admin, and the dialog says so: admins get an Install for everyone button, everyone else is told to ask
-- An importer can ask for something per import, such as an API key for a private character. The dialog shows the field, asks again when an import turns out to need it, and never stores what you type
-- Audiobooks: `.m4b` files are picked up by the scan and play in the audio player like any other track, with their duration, tags and cover art
-- The audio player lists an audiobook's chapters and shows the one playing; pick a chapter to jump to it. Works for `.m4b`/`.m4a` and chaptered MP3 files
-- The audio list names each track by its tags - `03 · Die Sümpfe Harodiens`, with artist, album and duration beneath - and falls back to the filename, without its extension, for untagged files
-- Audio opens in album order: within a folder, tracks play by disc and track number whatever their files are called. Pick Track in the sort menu to get it back after choosing another order. Existing tracks pick up their numbers on the next scan
-- Admins can style the OIDC sign-in button to match their provider: background, text and border colours, corner radius, and an uploaded logo, under Settings → Authentication, or pinned with `OIDC_BUTTON_*` environment variables
-- Magazines & Zines is a built-in book category: folders named `Magazines`, `Zines`, `Periodicals`, `Dragon Magazine` and the like are filed there on the next scan, and Create standard category folders adds a `Magazines` folder
-- Export from the reader (⋮ → Export pages & cut-outs, or press `e`): save a page range as a PDF - a character sheet, a chapter, the whole section the page is in - or as PNG, JPEG or WebP images, with facing pages joined into one picture for maps printed across a spread
-- Cut out maps, tables, cards and tokens: draw rectangles, squares or circles on a page, or across both halves of a spread, and each one downloads as its own file - round tokens with transparent corners. Find shapes picks out every token or picture on a page for you
-- The PDF map viewer has the same Export button
-- Admins on a writable library can save an export straight into a library folder - beside the book, or into Tokens or Maps - instead of downloading it, and Grimoire indexes the new files right away
-- Grimoire Codex DB, the community catalogue of TTRPG systems and books, is built in as a metadata source. Set `GRIMOIRE_CODEX_DB_API_TOKEN` to turn it on: it is listed first in Fetch metadata, and applying a result links the book or system to its Grimoire Codex DB record
-- GMs and admins can add a book or system to Grimoire Codex DB, or send chosen fields as a correction to the linked record
-- Book lookups can include file hashes so Grimoire Codex DB finds the exact file - off by default, under Settings → Add-ons → Grimoire Codex DB
-- Fetch metadata from the reader's details panel, without leaving for the system page
-- Name the main version of a family instead of "Main version": a map pack whose main copy is the gridless cut can say Gridless. Admins rename any version - the main one included - from the version picker on a map, token, audio or 3D model page, or from a book's Versions section
-- Reviewing duplicates pre-fills what each copy is from its filename, for the copy you keep as well as the other - a `Tavern_nogrid` / `Tavern_grid` pair arrives as Gridless main, Gridded variant
-- A character sheet can let you type your own class, species or background when nothing in the catalogue fits, for homebrew picks (thanks @ianfhunter)
+- An MCP server lets AI assistants such as Claude Code search your library, read pages and campaign notes, and cite the book and page, limited to what their API key allows. Off unless `MCP_ENABLED=true`
+- Assistants can bookmark pages, tag books and write private wiki pages when asked, but never change or delete what's there
+- Ready-made assistant prompts for session prep and rules questions
+- Share links: a public, revocable link to a book, map, token, audio track or 3D model, with optional expiry and password and a direct file address for VTTs and Discord
+- Manage your share links under Settings → Account → Sharing; admins choose who may create them, and `SHARE_LINKS_ENABLED=false` turns them off
+- Set a map up for OTFBM, the battle map renderer behind Avrae's `!map` on Discord
+- Character importers for Forge Steel, Pathbuilder 2e, D&D Beyond and DiceCloud build the character on the right sheet, installing it if needed (thanks @ianfhunter)
+- `.m4b` audiobooks, with chapter navigation for `.m4b`, `.m4a` and chaptered MP3 files
+- Audio tracks are named by their tags and play in album order
+- Admins can style the OIDC sign-in button to match their provider
+- Magazines & Zines is a built-in book category
+- Export from the reader (`e`): a page range as PDF or images, or cut-outs of maps, cards and round tokens. Also in the PDF map viewer
+- Admins can save an export straight into a library folder
+- Grimoire Codex DB as a metadata source, behind `GRIMOIRE_CODEX_DB_API_TOKEN`, and GMs can submit books, systems and corrections to it
+- Fetch metadata from the reader's details panel
+- Name the main version of a family, such as Gridless, and duplicate review pre-fills version names from filenames
+- Character sheets can let you type a homebrew class, species or background (thanks @ianfhunter)
 
 ### Changed
 
-- Map, token, audio and model pages keep Favorite, Add to campaign and Share in a ⋮ menu, as the book reader does, so the toolbar has room for the title
-- The Campaigns list on the Users page stays collapsed until opened
+- Map, token, audio and model pages keep Favorite, Add to campaign and Share in a ⋮ menu
+- The Campaigns list on the Users page starts collapsed
 
 ### Fixed
 
-- Titles, artists and albums tagged inside WAV and AIFF files are now read, and show in the audio list and on the track's page
-- Admins see Move, Rename and Delete in the reader's ⋮ menu, and a book's details show its file path - the book's library path was being dropped from the reader's data
-- A folder or file whose name isn't valid UTF-8, often one named on Windows and copied to a Linux share, no longer stops the whole library scan. The scan skips it and logs which one to rename
-- The file manager no longer fails with "Internal Server Error" on such a name. It shows the entry greyed out with a placeholder character, and a ? icon explains why it can't be changed from Grimoire
-- A game system's description keeps the paragraph breaks entered in its editor instead of running together as one block. Long descriptions show their first few lines with a Read more button
+- Titles, artists and albums tagged in WAV and AIFF files are read
+- Admins see Move, Rename and Delete in the reader's ⋮ menu
+- A file or folder name that isn't valid UTF-8 is skipped instead of failing the whole scan, and shows greyed out in the file manager
+- System descriptions keep their paragraph breaks, and long ones collapse behind Read more
 
 ### Security
 
-- SSO sign-in only returns you to a page on your own Grimoire. A crafted sign-in link could send you, and your new session, to another site once you'd signed in with your identity provider
+- SSO sign-in only returns you to a page on your own Grimoire
 
 ## [1.8.0] - 2026-10-08
 
@@ -755,7 +679,8 @@ Initial release. A self-hosted library manager for your TTRPG PDFs, battlemaps, 
 - Explicit content controls with per-user opt-in
 - Docker-first deployment
 
-[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/hunter-read/grimoire/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/hunter-read/grimoire/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/hunter-read/grimoire/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/hunter-read/grimoire/compare/v1.7.2...v1.7.3
