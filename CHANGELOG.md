@@ -8,6 +8,8 @@ Release candidates are omitted; their contents are rolled into the stable releas
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-10-23
+
 ### Added
 
 - Sending a book or system to Grimoire Codex DB compares it with Grimoire Codex DB first and ticks the fields that differ, showing both values, so a correction is one click
@@ -33,6 +35,8 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - Script add-ons that need an API token from the server's environment, such as `BGG_API_TOKEN` for the RPGGeek scrapers, receive it. An add-on names the variables it needs, and Grimoire's own credentials are still withheld
 - A book whose game system is not in Grimoire Codex DB yet can be sent: choose the matching Grimoire Codex DB system, or send the system along with it
 - New books and systems no longer need a note before they can be sent; a source link does the job, and Grimoire Codex DB asks only accounts it does not trust yet
+- Collapse All and Expand All on a system's page reach its subfolders too, and Collapse All stays available while any subfolder is open
+- A replaced character portrait shows the new picture straight away instead of the cached old one
 
 ## [1.9.1] - 2026-10-22
 
@@ -707,7 +711,8 @@ Initial release. A self-hosted library manager for your TTRPG PDFs, battlemaps, 
 - Explicit content controls with per-user opt-in
 - Docker-first deployment
 
-[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.9.2...HEAD
+[1.9.2]: https://github.com/hunter-read/grimoire/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/hunter-read/grimoire/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/hunter-read/grimoire/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/hunter-read/grimoire/compare/v1.7.3...v1.8.0
