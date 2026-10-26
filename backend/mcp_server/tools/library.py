@@ -270,8 +270,8 @@ def tag_books(args: TagBooksArgs, ctx: ToolContext) -> str:
     from ...routers._bulk_schemas import BulkAddTags
     from ...routers.books.core import bulk_add_book_tags
 
-    # The bulk route trusts its role guard and checks no per-book access; a model
-    # can name any id it saw or guessed, so each book is read-checked first.
+    # The bulk route scopes rows with visible_books, which doesn't apply the
+    # explicit-content rule. get_book does, so each book is read-checked first.
     readable: list[str] = []
     refused: list[str] = []
     for book_id in dict.fromkeys(args.book_ids):
