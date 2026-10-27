@@ -32,6 +32,7 @@ Release candidates are omitted; their contents are rolled into the stable releas
 - A map whose file is replaced shows the new image the next time it is opened, instead of the copy the browser kept from before
 - The API schema at `/api/openapi.json` no longer gives the share-link and calendar-feed routes two operations with the same id, so API client generators and the docs page's "Try it out" work for them, and their ids no longer change between restarts
 - The campaigns page and the admin user list no longer slow down as campaigns, members and users are added
+- A library scan that finds the database busy, for example while a backup or another worker is writing, skips that file cleanly and carries on rather than risking an error or a change saved after it was reported as rolled back
 
 ## [1.9.2] - 2026-10-23
 
