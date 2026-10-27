@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend import indexer  # package namespace, for patch-sensitive calls
+from .. import pdf_worker
 from ..models import Book
 from ._subprocess import OCR_PAGE_ABANDONED, PdfExtractionCrashError, _commit
 
@@ -42,11 +43,17 @@ Verdict = Literal["scan", "artwork", "stopped"]
 def should_sample(book: Book) -> bool:
     """Whether ``book`` should be sampled before a full OCR pass.
 
-    Only a fresh pass over a book the indexer queued for a thin text layer: a
-    book with no text at all is a scan, a resumed pass already decided, and a
-    manual Re-OCR (``text_pages`` cleared) asked for the whole book.
+    Only a fresh pass over a book the indexer queued: a resumed pass already
+    decided, and a manual Re-OCR (``text_pages`` cleared) asked for the whole
+    book outright.
+
+    It deliberately does not ask how much text the book has. ``text_pages``
+    counts pages carrying a text layer, and a book whose every page holds only
+    a running header counts 0 of them — the same as a book with no text at all,
+    though one may well be artwork and the other cannot be. ``probe`` reads the
+    book to tell those apart, since it extracts the text anyway.
     """
-    return not (book.ocr_pages_done or 0) and bool(book.text_pages)
+    return book.text_pages is not None and not (book.ocr_pages_done or 0)
 
 
 def sample_pages(image_only: list[int], count: int = SAMPLE_PAGES) -> list[int]:
@@ -85,7 +92,16 @@ def probe(
         logger.warning(f"OCR: couldn't sample '{book.filename}' ({e}) - reading all of it")
         return "scan"
 
-    with_text = {p["page"] for p in pages}
+    if not pages:
+        # Not a page of text in it, not even a header. That is a scan, judged
+        # on its own as it always was - there is nothing here to sample that
+        # would say otherwise.
+        return "scan"
+
+    # The pages OCR would actually read: those without a text layer of their
+    # own. A page holding only a running header is one of them, so sampling it
+    # is what tells a scan stamped with its chapter title from real artwork.
+    with_text = {p["page"] for p in pages if not pdf_worker.text_is_thin(p["content"])}
     image_only = [i for i in range(page_count) if i + 1 not in with_text]
     words: list[int] = []
     for index in sample_pages(image_only):
@@ -109,7 +125,10 @@ def probe(
             ),
             {"bid": book.id, "pnum": page["page"], "content": page["content"]},
         )
-    book.text_pages = len(pages)
+    # Every page's own text is kept, but only the substantive ones count - the
+    # same measure the indexer records, so Re-OCR is still offered for a book
+    # whose pages carry nothing but a header.
+    book.text_pages = len(with_text)
     book.ocr_pending = False
     book.ocr_pages_done = 0
     book.indexed = True
