@@ -11,6 +11,7 @@ Release candidates are omitted; their contents are rolled into the stable releas
 ### Added
 
 - Character sheets can ship a second layout for phones, with its own stylesheet. On a phone-sized screen the sheet switches to it, and back again when you rotate to a wider view. Paste one in the new Mobile layout and Mobile styles boxes, or install a catalogue sheet that includes one
+- Grimoire can keep your Grimoire Codex DB collection in sync, so the site can show which books and systems you own and filter by them. Turn on **Keep my Grimoire Codex DB collection in sync** in the Grimoire Codex DB settings (or set `GRIMOIRE_CODEX_DB_SYNC_COLLECTION`): linking a book or system marks it as owned, unlinking takes the mark back, and **Sync collection now** catches books deleted from the library. Off by default
 - `OCR_MIN_TEXT_COVERAGE` sets how much of a PDF its own text must cover before it counts as a text book (default `0.5`); `0` only reads books with no text at all with OCR, as before
 - `OCR_MIN_PAGE_CHARS` sets how many characters a page must carry to count as a page of text (default `100`), so a running header on its own no longer passes for a text layer; `0` counts any text at all, as before
 - The Characters page can be sorted by name, system or sheet version as well as by when each character was last updated, and remembers your choice. Sorted by system, each system gets its own heading; sorted by sheet, each card shows its sheet's version
