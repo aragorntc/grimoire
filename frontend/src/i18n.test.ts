@@ -1,0 +1,216 @@
+import { describe, it, expect, afterEach, vi } from 'vitest'
+
+// We test the language-detection behaviour indirectly via i18n.language,
+// but to do that we need to reload the module with different env state.
+// Since the module is initialized once, we test detectLanguage by checking
+// the exported AVAILABLE_LANGUAGES array and that the module loads without
+// error, then test the priority rules through manual invocation of an
+// equivalent function.
+
+// ---------------------------------------------------------------------------
+// AVAILABLE_LANGUAGES
+// ---------------------------------------------------------------------------
+
+describe('i18n — AVAILABLE_LANGUAGES', () => {
+  it('is a non-empty array', async () => {
+    const { AVAILABLE_LANGUAGES } = await import('./i18n')
+    expect(Array.isArray(AVAILABLE_LANGUAGES)).toBe(true)
+    expect(AVAILABLE_LANGUAGES.length).toBeGreaterThan(0)
+  })
+
+  it('each entry has value and label properties', async () => {
+    const { AVAILABLE_LANGUAGES } = await import('./i18n')
+    for (const entry of AVAILABLE_LANGUAGES) {
+      expect(entry).toHaveProperty('value')
+      expect(entry).toHaveProperty('label')
+    }
+  })
+
+  it('includes en-US', async () => {
+    const { AVAILABLE_LANGUAGES } = await import('./i18n')
+    expect(AVAILABLE_LANGUAGES.some((l) => l.value === 'en-US')).toBe(true)
+  })
+
+  it('is sorted by label', async () => {
+    const { AVAILABLE_LANGUAGES } = await import('./i18n')
+    const labels = AVAILABLE_LANGUAGES.map((l) => l.label)
+    const sorted = [...labels].sort((a, b) => a.localeCompare(b))
+    expect(labels).toEqual(sorted)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Lazy locales (issue #708)
+// ---------------------------------------------------------------------------
+
+describe('i18n — locales load on demand', () => {
+  afterEach(async () => {
+    const { default: i18n } = await import('./i18n')
+    await i18n.changeLanguage('en-US')
+  })
+
+  it('bundles only en-US up front', async () => {
+    const { default: i18n } = await import('./i18n')
+    expect(i18n.hasResourceBundle('en-US', 'translation')).toBe(true)
+    expect(i18n.hasResourceBundle('sv-SE', 'translation')).toBe(false)
+  })
+
+  it('loads a language when it is switched to', async () => {
+    const { default: i18n } = await import('./i18n')
+    await i18n.changeLanguage('de-DE')
+    expect(i18n.hasResourceBundle('de-DE', 'translation')).toBe(true)
+    expect(i18n.t('nav.library')).toBe('Bibliothek')
+  })
+
+  it('reads an unknown language as empty, so en-US shows through', async () => {
+    const { default: i18n, lazyLocales } = await import('./i18n')
+    const callback = vi.fn()
+    lazyLocales.read('xx-XX', 'translation', callback)
+    expect(callback).toHaveBeenCalledWith(null, {})
+    await i18n.changeLanguage('xx-XX')
+    expect(i18n.t('nav.library')).toBe('Library')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// detectLanguage priority rules (tested via an equivalent inline function)
+// ---------------------------------------------------------------------------
+
+// These tests replicate the detectLanguage() logic directly so we can
+// exercise every branch without reloading the module.
+
+function makeDetect(availableLocales: string[]) {
+  return function detectLanguage(
+    localStorageValue: string | null | undefined,
+    navigatorLanguages: readonly string[] | null | undefined
+  ) {
+    if (localStorageValue) return localStorageValue
+
+    for (const lang of navigatorLanguages ?? []) {
+      const exact = availableLocales.find((a) => a === lang)
+      const prefix = availableLocales.find((a) => a.startsWith(lang.split('-')[0]))
+      if (exact || prefix) return exact ?? prefix
+    }
+    return 'en-US'
+  }
+}
+
+const LOCALES = [
+  'en-US',
+  'en-CA',
+  'fr-CA',
+  'fr-FR',
+  'de-DE',
+  'pt-PT',
+  'pt-BR',
+  'es-ES',
+  'es-MX',
+  'nl-NL',
+]
+const detect = makeDetect(LOCALES)
+
+describe('detectLanguage — priority', () => {
+  it('returns localStorage value when present, regardless of navigator', () => {
+    expect(detect('de-DE', ['en-US'])).toBe('de-DE')
+  })
+
+  it('ignores localStorage when the value is an empty string', () => {
+    // empty string is falsy, so navigator is tried next
+    expect(detect('', ['fr-CA'])).toBe('fr-CA')
+  })
+
+  it('exact-matches a navigator language', () => {
+    expect(detect(null, ['fr-CA'])).toBe('fr-CA')
+  })
+
+  it('prefix-matches when an exact locale is not available', () => {
+    // navigator says 'fr-BE', which is not in LOCALES; prefix 'fr' matches fr-CA
+    expect(detect(null, ['fr-BE'])).toBe('fr-CA')
+  })
+
+  it('tries navigator languages in order, picks first match', () => {
+    // zh-CN (no match), then de-DE (exact match)
+    expect(detect(null, ['zh-CN', 'de-DE'])).toBe('de-DE')
+  })
+
+  it('falls back to en-US when no navigator language matches', () => {
+    expect(detect(null, ['ja-JP', 'ko-KR'])).toBe('en-US')
+  })
+
+  it('falls back to en-US when navigator languages list is empty', () => {
+    expect(detect(null, [])).toBe('en-US')
+  })
+
+  it('falls back to en-US when navigator languages is null', () => {
+    expect(detect(null, null)).toBe('en-US')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Locale parity — every locale must mirror en-US exactly
+// ---------------------------------------------------------------------------
+
+type LocaleJson = Record<string, unknown>
+
+const localeModules = import.meta.glob<LocaleJson | { default: LocaleJson }>('./locales/*.json', {
+  eager: true,
+})
+
+function flatten(obj: LocaleJson, prefix = ''): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(obj)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      Object.assign(out, flatten(value as LocaleJson, `${prefix}${key}.`))
+    } else {
+      out[`${prefix}${key}`] = value
+    }
+  }
+  return out
+}
+
+function placeholders(str: unknown): string[] {
+  if (typeof str !== 'string') return []
+  return [...str.matchAll(/{{\s*(\w+)\s*}}/g)].map((m) => m[1]).sort()
+}
+
+function loadLocale(code: string) {
+  const path = `./locales/${code}.json`
+  const mod = localeModules[path]
+  return flatten(((mod as { default?: LocaleJson }).default ?? mod) as LocaleJson)
+}
+
+describe('locale parity with en-US', () => {
+  const base = loadLocale('en-US')
+  const baseKeys = Object.keys(base)
+  const others = Object.keys(localeModules)
+    .map((p) => p.match(/\/([a-zA-Z-]+)\.json$/)![1])
+    .filter((c) => c !== 'en-US')
+
+  it('discovers more than just en-US', () => {
+    expect(others.length).toBeGreaterThan(0)
+  })
+
+  it.each(others)('%s has exactly the same keys as en-US', (code) => {
+    const locale = loadLocale(code)
+    const localeKeys = Object.keys(locale)
+    const missing = baseKeys.filter((k) => !(k in locale))
+    const extra = localeKeys.filter((k) => !(k in base))
+    expect({ code, missing, extra }).toEqual({ code, missing: [], extra: [] })
+  })
+
+  it.each(others)('%s has no null/empty values', (code) => {
+    const locale = loadLocale(code)
+    const empties = Object.entries(locale)
+      .filter(([, v]) => v === null || v === undefined || v === '')
+      .map(([k]) => k)
+    expect(empties).toEqual([])
+  })
+
+  it.each(others)('%s preserves en-US interpolation placeholders', (code) => {
+    const locale = loadLocale(code)
+    const mismatches = baseKeys
+      .filter((k) => k in locale)
+      .filter((k) => placeholders(locale[k]).join(',') !== placeholders(base[k]).join(','))
+    expect(mismatches).toEqual([])
+  })
+})

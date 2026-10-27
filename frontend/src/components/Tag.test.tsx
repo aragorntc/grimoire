@@ -1,0 +1,64 @@
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import Tag, { type TagProps } from './Tag'
+
+const renderTag = (props: TagProps) =>
+  render(
+    <MemoryRouter>
+      <Tag {...props} />
+    </MemoryRouter>
+  )
+
+describe('Tag', () => {
+  it('renders the label text', () => {
+    renderTag({ label: 'fantasy' })
+    expect(screen.getByText('Fantasy')).toBeInTheDocument()
+  })
+
+  it('capitalizes the first letter', () => {
+    renderTag({ label: 'dungeon-crawl' })
+    expect(screen.getByText('Dungeon-crawl')).toBeInTheDocument()
+  })
+
+  it('handles single-character labels', () => {
+    renderTag({ label: 'a' })
+    expect(screen.getByText('A')).toBeInTheDocument()
+  })
+
+  it('renders without throwing when label is undefined', () => {
+    renderTag({} as TagProps)
+  })
+
+  it('renders without throwing when label is an empty string', () => {
+    renderTag({ label: '' })
+  })
+
+  it('applies a custom background color when provided', () => {
+    renderTag({ label: 'test', color: '#ff0000' })
+    const el = screen.getByText('Test')
+    expect(el.style.background).toBe('rgb(255, 0, 0)')
+  })
+
+  // LinkableTag is now a real <Link> — assert the href rather than a navigate spy.
+  it('renders a link to the tags page (by internal key) for a linkable tag', () => {
+    renderTag({ label: 'Draw Steel' })
+    const link = screen.getByRole('link', { name: 'Draw Steel' })
+    expect(link).toHaveAttribute('href', '/tags?tag=draw%20steel')
+  })
+
+  it('renders a non-interactive span when linkable is false', () => {
+    renderTag({ label: 'fantasy', linkable: false })
+    const el = screen.getByText('Fantasy')
+    expect(el.tagName).toBe('SPAN')
+  })
+
+  // Middle-click now opens a new tab natively because the chip is a real <a>.
+  // No JS needed — we just verify the element is an anchor with the right href.
+  it('is a real anchor so middle click opens a new tab natively', () => {
+    renderTag({ label: 'Draw Steel' })
+    const link = screen.getByRole('link', { name: 'Draw Steel' })
+    expect(link.tagName).toBe('A')
+    expect(link).toHaveAttribute('href', '/tags?tag=draw%20steel')
+  })
+})

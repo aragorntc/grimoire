@@ -1,0 +1,134 @@
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type HTMLAttributes,
+  type ReactNode,
+} from 'react'
+import { LuChevronRight } from 'react-icons/lu'
+
+/**
+ * A context-menu row that opens a nested panel of choices on hover or click.
+ *
+ * The file menu accumulated enough options — rename, new folder, four pin
+ * edges, six container kinds, NSFW, metadata, delete — that a flat list became
+ * a wall to read past. Grouping the multi-choice sets behind one row each keeps
+ * the top level to a scannable set of verbs.
+ *
+ * Opens on hover (with a small close delay so the diagonal move to the submenu
+ * doesn't dismiss it) and on click, so it works for pointer and keyboard alike.
+ */
+export interface MenuSubmenuProps {
+  label: ReactNode
+  icon?: ReactNode
+  children?: ReactNode
+  itemStyle?: CSSProperties
+  hoverProps?: HTMLAttributes<HTMLButtonElement>
+  testId?: string
+}
+
+export default function MenuSubmenu({
+  label,
+  icon,
+  children,
+  itemStyle,
+  hoverProps,
+  testId,
+}: MenuSubmenuProps) {
+  const [open, setOpen] = useState(false)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // Offsets applied to the panel's default position (right of the row, aligned
+  // to its top) to keep it inside the window — see the layout effect below.
+  const [shift, setShift] = useState({ up: 0, flip: false })
+
+  // The parent menu is already clamped to the viewport, but a panel opening off
+  // its bottom-right corner can still overflow: the container-kind list is
+  // seven rows tall and its row sits low in the menu. Measure once open and
+  // pull it up (and to the left of the row) by however much it overhangs.
+  useLayoutEffect(() => {
+    if (!open) {
+      setShift({ up: 0, flip: false })
+      return
+    }
+    const el = panelRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    // `r` is the box as currently positioned, so the overhang is measured
+    // against the live layout and subtracting it lands the panel on the edge.
+    const overflowY = r.bottom - (window.innerHeight - 8)
+    const overflowX = r.right - (window.innerWidth - 8)
+    setShift({
+      up: overflowY > 0 ? Math.min(overflowY, r.top - 8) : 0,
+      flip: overflowX > 0,
+    })
+  }, [open])
+
+  const cancelClose = () => clearTimeout(closeTimer.current)
+  // Leaving the row briefly crosses dead space on the way to the panel; closing
+  // instantly would make the submenu unreachable by a diagonal mouse path.
+  const scheduleClose = () => {
+    cancelClose()
+    closeTimer.current = setTimeout(() => setOpen(false), 180)
+  }
+
+  return (
+    <div
+      style={{ position: 'relative' }}
+      onMouseEnter={() => {
+        cancelClose()
+        setOpen(true)
+      }}
+      onMouseLeave={scheduleClose}
+    >
+      <button
+        style={{ ...itemStyle, justifyContent: 'space-between' }}
+        {...hoverProps}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-testid={testId}
+        onClick={(e) => {
+          e.stopPropagation()
+          // Open, never toggle. Hovering the row already opened the panel, so a
+          // toggle here would close it on the very click meant to commit to it —
+          // which is what a pointer user does naturally, and what a click
+          // without a preceding hover (keyboard, touch) still needs to open.
+          setOpen(true)
+        }}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          {icon}
+          {label}
+        </span>
+        <LuChevronRight size={12} style={{ opacity: 0.7 }} />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          data-testid={testId ? `${testId}-panel` : undefined}
+          ref={panelRef}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+          style={{
+            position: 'absolute',
+            top: -4 - shift.up,
+            // Flipped to the row's left edge when opening rightwards would run
+            // off the window (a menu already clamped to the right edge).
+            ...(shift.flip ? { right: '100%', marginRight: 2 } : { left: '100%', marginLeft: 2 }),
+            minWidth: 200,
+            background: 'var(--bg-panel)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 4,
+            boxShadow: '0 8px 24px var(--overlay)',
+            zIndex: 1,
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}

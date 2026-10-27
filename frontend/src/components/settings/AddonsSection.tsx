@@ -1,0 +1,520 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { MouseEvent } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LuArrowUp, LuRefreshCw, LuTriangleAlert, LuPlus } from 'react-icons/lu'
+import api from '../../api'
+import type { Schema } from '../../api'
+import Spinner from '../Spinner'
+import AddonInstallDialog from './AddonInstallDialog'
+import type { PendingAddon } from './AddonInstallDialog'
+import AddonStatus from './AddonStatus'
+import PluginSourceRow from './PluginSourceRow'
+import PluginCard from './PluginCard'
+import type { PluginAddon } from './PluginCard'
+import PluginSourceContextMenu from './PluginSourceContextMenu'
+import CollapsibleSection from './CollapsibleSection'
+import ConfirmModal from './ConfirmModal'
+
+interface Status {
+  scope: string
+  notice?: string | null
+  error?: string
+}
+
+interface ContextMenuState {
+  x: number
+  y: number
+  addon: PluginAddon
+  isUpdate: boolean
+}
+
+// What an add-on action resolves to: a refresh lists the sources it could not
+// reach, an update-all how many it updated.
+type RunResult = { errors?: { url: string; error: string }[]; updated?: number } | null | undefined
+
+interface RunOptions {
+  scope?: string
+  success?: string | ((result: RunResult) => string) | null
+  onError?: ((message: string) => void) | null
+  onSuccess?: (() => void) | null
+}
+
+export default function AddonsSection() {
+  const { t } = useTranslation()
+  const [data, setData] = useState<Schema<'AddonListResponse'> | null>(null)
+  const [indexUrls, setIndexUrls] = useState<string[]>([])
+  const [newIndexUrl, setNewIndexUrl] = useState('')
+  const [busy, setBusy] = useState(false)
+  // The last action's outcome and where to show it: 'shared' (refresh, update
+  // all, the script switch) or the category of the add-on it was about.
+  const [status, setStatus] = useState<Status | null>(null)
+  const [sourceError, setSourceError] = useState('')
+  const [confirming, setConfirming] = useState<PendingAddon | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState<number | null>(null)
+  const [confirmReset, setConfirmReset] = useState(false)
+
+  const load = useCallback(() => {
+    api
+      .get('/addons')
+      .then((body) => {
+        setData(body)
+        setIndexUrls(body.index_urls || (body.index_url ? [body.index_url] : []))
+      })
+      .catch((e) => setStatus({ scope: 'shared', error: e.message }))
+  }, [])
+
+  useEffect(load, [load])
+
+  const isImporter = (addon: PluginAddon) => addon.kind === 'character-importer'
+  const scopeOf = (addon: PluginAddon) => (isImporter(addon) ? 'importers' : 'metadata')
+
+  // `success` is a message, or a function of the response that makes one. A
+  // response listing `errors` (sources a refresh could not reach) reports them
+  // beside the success rather than instead of it.
+  const run = (
+    promise: Promise<unknown>,
+    { scope = 'shared', success = null, onError = null, onSuccess = null }: RunOptions = {}
+  ) => {
+    setBusy(true)
+    setStatus(null)
+    setSourceError('')
+    return promise
+      .then((value) => {
+        const result = value as RunResult
+        const failures = result?.errors || []
+        const notice = typeof success === 'function' ? success(result) : success
+        const error = failures.map((e) => `${e.url}: ${e.error}`).join(' | ')
+        if (notice || error) setStatus({ scope, notice, error })
+        if (onSuccess) onSuccess()
+        load()
+      })
+      .catch((e) => (onError ? onError(e.message) : setStatus({ scope, error: e.message })))
+      .finally(() => setBusy(false))
+  }
+
+  const saveIndexUrls = (newUrls: string[], onSuccess?: () => void) =>
+    run(api.patch('/addons/settings', { index_urls: newUrls }), {
+      onError: setSourceError,
+      onSuccess,
+    })
+
+  const addIndexUrl = () => {
+    if (!newIndexUrl) return
+    const updated = [...indexUrls, newIndexUrl]
+    saveIndexUrls(updated, () => setNewIndexUrl(''))
+  }
+
+  const requestRemoveIndex = (index: number) => setConfirmRemove(index)
+  const executeRemoveIndex = () => {
+    if (confirmRemove === null) return
+    const updated = indexUrls.filter((_, i) => i !== confirmRemove)
+    setConfirmRemove(null)
+    saveIndexUrls(updated)
+  }
+
+  const requestResetIndex = () => setConfirmReset(true)
+  const executeResetIndex = () => {
+    const updated = [data!.default_index_url]
+    setConfirmReset(false)
+    saveIndexUrls(updated)
+  }
+
+  const refresh = () => run(api.post('/addons/refresh'), { success: t('addons.refreshed') })
+
+  const install = (
+    addon: PluginAddon,
+    approveScript = false,
+    specificIndexUrl: string | null | undefined = null
+  ) =>
+    run(
+      api.post(`/addons/${addon.id}/install`, {
+        approve_script: approveScript,
+        index_url: specificIndexUrl || addon.index_url,
+      }),
+      { scope: scopeOf(addon), success: t('addons.installed', { name: addon.name }) }
+    )
+
+  // Updating is the same install call — the version in the index is what gets
+  // fetched. A script-backed add-on whose script changed comes back unapproved,
+  // so consent is re-asked rather than inherited.
+  const update = (addon: PluginAddon, specificIndexUrl: string | null = null) => {
+    const hasNewChangelog = (addon.changelog || []).length > 0
+    const targetIndexUrl = specificIndexUrl || addon.index_url
+    if (addon.requires_script || hasNewChangelog) {
+      setConfirming({ ...addon, updating: true, targetIndexUrl })
+    } else {
+      run(
+        api.post(`/addons/${addon.id}/install`, {
+          approve_script: false,
+          index_url: targetIndexUrl,
+        }),
+        { scope: scopeOf(addon), success: t('addons.updated', { name: addon.name }) }
+      )
+    }
+  }
+
+  const updateAll = () =>
+    run(api.post('/addons/update-all'), {
+      success: (res) =>
+        res?.updated
+          ? t('addons.updatedCount', { count: res.updated })
+          : t('addons.alreadyUpToDate'),
+    })
+
+  const startInstall = (addon: PluginAddon, specificIndexUrl: string | null = null) => {
+    // Only code-bearing add-ons need consent; plain YAML installs straight away.
+    // (We also now show the confirmation dialog for YAML add-ons if they have a changelog)
+    const hasChangelog = addon.changelog && addon.changelog.length > 0
+    const targetIndexUrl = specificIndexUrl || addon.index_url
+    if (addon.requires_script || hasChangelog) {
+      setConfirming({ ...addon, targetIndexUrl })
+    } else {
+      install(addon, false, targetIndexUrl)
+    }
+  }
+
+  const toggleScripts = (allow: boolean) =>
+    run(api.patch('/addons/settings', { allow_scripts: allow }))
+
+  const toggleEnabled = (addon: PluginAddon) =>
+    run(api.patch(`/addons/${addon.id}`, { enabled: !addon.enabled }), { scope: scopeOf(addon) })
+
+  const remove = (addon: PluginAddon) =>
+    run(api.delete(`/addons/${addon.id}`), {
+      scope: scopeOf(addon),
+      success: t('addons.removed', { name: addon.name }),
+    })
+
+  const handleContextMenu = (e: MouseEvent, addon: PluginAddon, isUpdate: boolean) => {
+    e.preventDefault()
+    if (!addon.available_in || addon.available_in.length <= 1) return
+    setContextMenu({ x: e.clientX, y: e.clientY, addon, isUpdate })
+  }
+
+  if (!data) return <Spinner />
+
+  const installedIds = new Set(data.installed.map((a) => a.id))
+  const pendingUpdates = data.installed.filter((a) => a.update_available).length
+  const notInstalled = data.available.filter((a) => !installedIds.has(a.id))
+
+  // Refresh, update all and the script switch act on every category, so they
+  // sit above them all; each category lists its own add-ons and reports what
+  // happened to them.
+  const statusFor = (scope: string) =>
+    status?.scope === scope ? <AddonStatus error={status.error} notice={status.notice} /> : null
+
+  const addonLists = (installed: PluginAddon[], available: PluginAddon[]) => (
+    <>
+      <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+        {t('addons.installedHeading')}
+      </h4>
+      {installed.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
+          {t('addons.noneInstalled')}
+        </p>
+      )}
+      <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px' }}>
+        {installed.map((addon) => (
+          <PluginCard
+            key={addon.id}
+            addon={addon}
+            isInstalled={true}
+            trustedIndexUrls={data?.trusted_index_urls || []}
+            busy={busy}
+            onContextMenu={handleContextMenu}
+            onUpdate={update}
+            onToggleEnabled={toggleEnabled}
+            onRemove={remove}
+          />
+        ))}
+      </ul>
+
+      <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+        {t('addons.availableHeading')}
+      </h4>
+      {available.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
+          {t('addons.noneAvailable')}
+        </p>
+      )}
+      <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px' }}>
+        {available.map((addon) => (
+          <PluginCard
+            key={addon.id}
+            addon={addon}
+            isInstalled={false}
+            trustedIndexUrls={data?.trusted_index_urls || []}
+            busy={busy}
+            onContextMenu={handleContextMenu}
+            onInstall={startInstall}
+          />
+        ))}
+      </ul>
+    </>
+  )
+
+  // An older server may not report the default, in which case treat the
+  // configured URL as the default rather than crying "custom".
+  const isCustomIndex = indexUrls.length !== 1 || indexUrls[0] !== data.default_index_url
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          marginBottom: 16,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
+        <button
+          onClick={refresh}
+          disabled={busy}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '8px 16px',
+            borderRadius: 6,
+            background: 'var(--gold-dim)',
+            color: 'var(--bg-deep)',
+            fontWeight: 600,
+            cursor: busy ? 'default' : 'pointer',
+          }}
+        >
+          <LuRefreshCw size={14} />
+          {t('addons.refresh')}
+        </button>
+        {pendingUpdates > 0 && (
+          <button
+            onClick={updateAll}
+            disabled={busy}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 16px',
+              borderRadius: 6,
+              border: '1px solid var(--gold-dim)',
+              background: 'none',
+              color: 'var(--gold-dim)',
+              fontWeight: 600,
+              cursor: busy ? 'default' : 'pointer',
+            }}
+          >
+            <LuArrowUp size={14} />
+            {t('addons.updateAll', { count: pendingUpdates })}
+          </button>
+        )}
+      </div>
+      {statusFor('shared')}
+      <label
+        style={{
+          display: 'flex',
+          gap: 8,
+          alignItems: 'flex-start',
+          fontSize: 13,
+          padding: '12px',
+          borderRadius: 6,
+          background: 'var(--bg-deep)',
+          marginBottom: 24,
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={data.allow_scripts}
+          onChange={(e) => toggleScripts(e.target.checked)}
+          style={{ marginTop: 2 }}
+        />
+        <span>
+          <strong>{t('addons.allowScripts')}</strong>
+          <div style={{ color: 'var(--text-dim)', marginTop: 2 }}>
+            {t('addons.allowScriptsDesc')}
+          </div>
+        </span>
+      </label>
+
+      {/* The index URL section is closed by default — the default suits almost every install. */}
+      <CollapsibleSection
+        title={t('addons.configuredSources', 'Add-on Sources')}
+        description={t(
+          'addons.sourcesDesc',
+          'Configure where Grimoire looks for add-ons, themes, and note templates.'
+        )}
+        storageKey="grimoire:settings:addons:sources"
+        defaultOpen={false}
+      >
+        <div style={{ marginBottom: 24 }}>
+          <ul
+            style={{
+              listStyle: 'none',
+              padding: 0,
+              margin: '0 0 16px 0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+            }}
+          >
+            {indexUrls.map((url, i) => (
+              <PluginSourceRow
+                key={i}
+                url={url}
+                index={i}
+                data={data}
+                busy={busy}
+                onRemove={requestRemoveIndex}
+              />
+            ))}
+          </ul>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              value={newIndexUrl}
+              onChange={(e) => setNewIndexUrl(e.target.value)}
+              placeholder={t(
+                'addons.addIndexUrl',
+                'Add index URL (e.g. https://.../index.json or index.yaml)...'
+              )}
+              style={{
+                flex: 1,
+                minWidth: 240,
+                padding: '8px 12px',
+                borderRadius: 6,
+                background: 'var(--bg)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                fontSize: 13,
+              }}
+            />
+            <button
+              onClick={addIndexUrl}
+              disabled={busy || !newIndexUrl}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 16px',
+                borderRadius: 6,
+                background: 'var(--border)',
+                border: 'none',
+                color: 'var(--text)',
+                cursor: busy || !newIndexUrl ? 'default' : 'pointer',
+                fontWeight: 500,
+                fontSize: 13,
+              }}
+            >
+              <LuPlus size={14} />
+              {t('addons.add', 'Add')}
+            </button>
+            <button
+              onClick={requestResetIndex}
+              disabled={busy || !isCustomIndex}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 6,
+                background: 'none',
+                border: '1px solid var(--border)',
+                color: 'var(--text-dim)',
+                cursor: busy || !isCustomIndex ? 'default' : 'pointer',
+                fontSize: 13,
+              }}
+            >
+              {t('addons.indexReset')}
+            </button>
+          </div>
+          {sourceError && (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+                color: 'var(--danger, #c0392b)',
+                background: 'var(--bg-deep)',
+                padding: '10px 12px',
+                borderRadius: 6,
+                marginTop: 16,
+                border: '1px solid var(--danger, #c0392b)',
+                wordBreak: 'break-word',
+              }}
+            >
+              <LuTriangleAlert size={16} style={{ flexShrink: 0 }} />
+              <span>{sourceError}</span>
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={t('addons.categories.metadata')}
+        description={t('addons.categories.metadataDesc')}
+        storageKey="grimoire:settings:addons:metadata"
+      >
+        {statusFor('metadata')}
+        {addonLists(
+          data.installed.filter((a) => !isImporter(a)),
+          notInstalled.filter((a) => !isImporter(a))
+        )}
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={t('addons.categories.importers')}
+        description={t('addons.categories.importersDesc')}
+        storageKey="grimoire:settings:addons:importers"
+      >
+        {statusFor('importers')}
+        {addonLists(data.installed.filter(isImporter), notInstalled.filter(isImporter))}
+      </CollapsibleSection>
+
+      {confirming && (
+        <AddonInstallDialog
+          addon={confirming}
+          defaultIndexUrl={data?.default_index_url}
+          trustedIndexUrls={data?.trusted_index_urls || []}
+          onConfirm={() => {
+            install(confirming, true, confirming.targetIndexUrl)
+            setConfirming(null)
+          }}
+          updating={!!confirming.updating}
+          onClose={() => setConfirming(null)}
+        />
+      )}
+
+      {contextMenu && (
+        <PluginSourceContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          isUpdate={contextMenu.isUpdate}
+          sources={contextMenu.addon.available_in}
+          defaultIndexUrl={data?.default_index_url}
+          trustedIndexUrls={data?.trusted_index_urls || []}
+          onSelect={(indexUrl) => {
+            if (contextMenu.isUpdate) update(contextMenu.addon, indexUrl)
+            else startInstall(contextMenu.addon, indexUrl)
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {confirmRemove !== null && (
+        <ConfirmModal
+          title={t('addons.confirmRemoveIndexTitle', 'Remove Index')}
+          message={t('addons.confirmRemoveIndex', 'Are you sure you want to remove this index?')}
+          onConfirm={executeRemoveIndex}
+          onClose={() => setConfirmRemove(null)}
+        />
+      )}
+
+      {confirmReset && (
+        <ConfirmModal
+          title={t('addons.confirmResetIndexTitle', 'Reset Indexes')}
+          message={t('addons.confirmResetIndex', 'Reset to default index?')}
+          onConfirm={executeResetIndex}
+          onClose={() => setConfirmReset(false)}
+        />
+      )}
+    </div>
+  )
+}

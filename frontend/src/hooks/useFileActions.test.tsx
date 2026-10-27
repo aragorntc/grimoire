@@ -1,0 +1,165 @@
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import useFileActions, {
+  LIBRARY_CHANGED,
+  type FileActionItem,
+  type LibraryChange,
+} from './useFileActions'
+import { useAuth } from '../context/AuthContext'
+import { useUISettings } from '../context/UISettingsContext'
+import { files as filesApi } from '../api'
+
+vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (k: string) => k }) }))
+vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn() }))
+vi.mock('../context/UISettingsContext', () => ({ useUISettings: vi.fn() }))
+vi.mock('../api', () => ({
+  files: { rename: vi.fn(), deleteEntry: vi.fn(), folderContents: vi.fn(), browse: vi.fn() },
+}))
+
+// A minimal host: renders the openers as buttons plus whatever modals the hook
+// hands back, which is exactly the contract a real menu implements.
+// The mocks are fed partial fixtures, so they are reached as plain mocks.
+const mockUseAuth = vi.mocked(useAuth) as unknown as Mock
+const mockUseUISettings = vi.mocked(useUISettings) as unknown as Mock
+const mockFiles = vi.mocked(filesApi) as unknown as Record<
+  'rename' | 'deleteEntry' | 'folderContents' | 'browse',
+  Mock
+>
+
+function Host({
+  item,
+  onChanged,
+}: {
+  item: FileActionItem
+  onChanged?: (detail: LibraryChange) => void
+}) {
+  const actions = useFileActions({ onChanged })
+  return (
+    <div>
+      <span data-testid="available">{String(actions.available)}</span>
+      <span data-testid="can-remove">{String(actions.canRemove)}</span>
+      {actions.available && (
+        <>
+          <button onClick={() => actions.move(item)}>move</button>
+          <button onClick={() => actions.rename(item)}>rename</button>
+          <button onClick={() => actions.remove(item)}>remove</button>
+        </>
+      )}
+      {actions.modals}
+    </div>
+  )
+}
+
+const book = { relative_path: 'books/System/core/tome.pdf', filename: 'tome.pdf' }
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockUseAuth.mockReturnValue({ user: { role: 'admin' } })
+  mockUseUISettings.mockReturnValue({ library_writable: true })
+  mockFiles.folderContents.mockResolvedValue({ has_content: false, name: 'x' })
+  mockFiles.deleteEntry.mockResolvedValue({ path: 'x', records: 1, files: 1 })
+  mockFiles.rename.mockResolvedValue({})
+  mockFiles.browse.mockResolvedValue({ writable: true, entries: [] })
+})
+
+describe('useFileActions', () => {
+  it('is available to an admin on a writable library', () => {
+    render(<Host item={book} />)
+    expect(screen.getByTestId('available')).toHaveTextContent('true')
+  })
+
+  it.each([
+    ['a gm', { user: { role: 'gm' } }, { library_writable: true }],
+    ['a player', { user: { role: 'player' } }, { library_writable: true }],
+    ['a read-only library', { user: { role: 'admin' } }, { library_writable: false }],
+  ])('is unavailable to %s', (_label, auth, ui) => {
+    mockUseAuth.mockReturnValue(auth)
+    mockUseUISettings.mockReturnValue(ui)
+    render(<Host item={book} />)
+    // Hidden rather than disabled: a read-only mount is a deployment choice,
+    // not a temporary state, so a greyed-out row would be permanent clutter.
+    expect(screen.getByTestId('available')).toHaveTextContent('false')
+  })
+
+  it('still allows removing on a read-only library', () => {
+    // The soft remove writes nothing to disk, so a read-only mount is no reason
+    // to withhold it: it is the only cleanup such a library can perform. Move
+    // and rename stay hidden, and the permanent mode is refused by the API.
+    mockUseUISettings.mockReturnValue({ library_writable: false })
+    render(<Host item={book} />)
+
+    expect(screen.getByTestId('available')).toHaveTextContent('false')
+    expect(screen.getByTestId('can-remove')).toHaveTextContent('true')
+  })
+
+  it('withholds removing from a non-admin regardless of writability', () => {
+    mockUseAuth.mockReturnValue({ user: { role: 'gm' } })
+    render(<Host item={book} />)
+    expect(screen.getByTestId('can-remove')).toHaveTextContent('false')
+  })
+
+  it('survives a missing auth or settings provider', () => {
+    mockUseAuth.mockReturnValue(null)
+    mockUseUISettings.mockReturnValue(null)
+    render(<Host item={book} />)
+    expect(screen.getByTestId('available')).toHaveTextContent('false')
+  })
+
+  it('renames through the API and reports it', async () => {
+    const onChanged = vi.fn()
+    render(<Host item={book} onChanged={onChanged} />)
+
+    await userEvent.click(screen.getByText('rename'))
+    const input = await screen.findByLabelText('files.newName')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Tome of Beasts')
+    await userEvent.click(screen.getByRole('button', { name: 'files.rename' }))
+
+    await waitFor(() =>
+      expect(filesApi.rename).toHaveBeenCalledWith(
+        'books/System/core/tome.pdf',
+        'Tome of Beasts.pdf'
+      )
+    )
+    expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ action: 'rename' }))
+  })
+
+  it('broadcasts to the rest of the app when a delete completes', async () => {
+    // The event is how a view four components above a menu learns to reload,
+    // without a refresh callback being threaded through every layer between.
+    const listener = vi.fn()
+    window.addEventListener(LIBRARY_CHANGED, listener)
+    render(<Host item={book} />)
+
+    await userEvent.click(screen.getByText('remove'))
+    await userEvent.click(await screen.findByTestId('delete-submit'))
+
+    await waitFor(() => expect(listener).toHaveBeenCalled())
+    expect(listener.mock.calls[0][0].detail).toMatchObject({
+      action: 'delete',
+      path: 'books/System/core/tome.pdf',
+    })
+    window.removeEventListener(LIBRARY_CHANGED, listener)
+  })
+
+  it('derives the entry from a browse row as readily as a book record', async () => {
+    render(<Host item={{ path: 'maps/City/keep.png', name: 'keep.png', is_dir: false }} />)
+
+    await userEvent.click(screen.getByText('remove'))
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('delete-submit'))
+    await waitFor(() =>
+      expect(filesApi.deleteEntry).toHaveBeenCalledWith('maps/City/keep.png', null, false)
+    )
+  })
+
+  it('opens no dialog for an item with no library path', async () => {
+    render(<Host item={{ filename: 'unknown.pdf' }} />)
+
+    await userEvent.click(screen.getByText('remove'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})

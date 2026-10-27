@@ -1,0 +1,286 @@
+import {
+  useRef,
+  useEffect,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+  type SetStateAction,
+  type TouchEvent as ReactTouchEvent,
+} from 'react'
+import { MIN_ZOOM, MAX_ZOOM, type Pan } from './useReaderZoom'
+import { createWheelGesture } from './wheelGesture'
+
+// Largest zoom change a single wheel event may cause, so a fast flick on a mouse
+// wheel doesn't jump the whole range at once.
+const ZOOM_WHEEL_STEP = 0.15
+
+export interface ReaderGesturesOptions {
+  /** 'page' | 'spread' | 'pdf' */
+  mode: string
+  currentPage: number
+  zoom: number
+  pan: Pan
+  /** Live zoom, for native listeners. */
+  zoomRef: RefObject<number>
+  /** Live pan, for native listeners. */
+  panRef: RefObject<Pan>
+  setPan: (next: SetStateAction<Pan>) => void
+  /** Absolute zoom set, for pinch. */
+  setZoomDirect: (next: number) => void
+  zoomAt: (delta: number, originX?: number, originY?: number) => void
+  /** The hook never passes a mode, so any reader's mode type fits. */
+  goToPage: (page: number, mode?: never, axis?: 'x' | 'y') => void
+  /** The scrollable content container. */
+  contentRef: RefObject<HTMLElement | null>
+  /** 'page' | 'zoom' | 'none' */
+  wheelAction?: string
+}
+
+export interface ReaderGestures {
+  handleTouchStart: (e: ReactTouchEvent) => void
+  handleTouchMove: (e: ReactTouchEvent) => void
+  handleTouchEnd: (e: ReactTouchEvent) => void
+  handleMouseDown: (e: ReactMouseEvent) => void
+}
+
+type PanGesture = { type: 'pan'; startX: number; startY: number; startPan: Pan }
+type ReaderGesture =
+  | { type: 'pinch'; initialDist: number; initialZoom: number; initialPan: Pan }
+  | PanGesture
+  | { type: 'swipe' }
+
+type TouchPoint = { clientX: number; clientY: number }
+
+/**
+ * Manages wheel, pinch-to-zoom, pan, and swipe gesture navigation for the reader.
+ *
+ * Zoom state itself lives in `useReaderZoom`, shared with the toolbar and the
+ * keyboard shortcuts; this hook only drives it from gestures.
+ *
+ * @param {object} opts
+ * @param {string}   opts.mode        - 'page' | 'spread' | 'pdf'
+ * @param {number}   opts.currentPage
+ * @param {number}   opts.zoom
+ * @param {object}   opts.pan         - { x, y }
+ * @param {object}   opts.zoomRef     - live zoom, for native listeners
+ * @param {object}   opts.panRef      - live pan, for native listeners
+ * @param {Function} opts.setPan
+ * @param {Function} opts.setZoomDirect - absolute zoom set, for pinch
+ * @param {Function} opts.zoomAt      - (delta, originX, originY) => void
+ * @param {Function} opts.goToPage    - (page, mode?, axis?) => void
+ * @param {object}   opts.contentRef  - ref to the scrollable content container
+ * @param {string}   opts.wheelAction - 'page' | 'zoom' | 'none'
+ *
+ * @returns {{ handleTouchStart, handleTouchMove, handleTouchEnd, handleMouseDown }}
+ */
+export default function useReaderGestures({
+  mode,
+  currentPage,
+  zoom,
+  pan,
+  zoomRef,
+  panRef,
+  setPan,
+  setZoomDirect,
+  zoomAt,
+  goToPage,
+  contentRef,
+  wheelAction = 'page',
+}: ReaderGesturesOptions): ReaderGestures {
+  const gestureRef = useRef<ReaderGesture | null>(null)
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressFiredRef = useRef(false)
+  const [isNewWheelGesture] = useState(createWheelGesture)
+
+  // Wheel: zoom or page, per the user's preference. Paging turns one page per
+  // wheel gesture, so a flick doesn't skip several pages; zooming deliberately
+  // is not throttled, since dropping frames there just feels broken.
+  useEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const handleWheel = (e: WheelEvent) => {
+      if (mode === 'pdf') return
+
+      // Ctrl/Cmd + wheel is the browser-wide zoom convention, so honour it
+      // whatever the preference is — people reach for it first.
+      const wantsZoom = e.ctrlKey || e.metaKey || wheelAction === 'zoom'
+
+      if (wantsZoom) {
+        e.preventDefault()
+        const rect = el.getBoundingClientRect()
+        // Cursor offset from the element centre: zooming about the centre walks
+        // whatever you were reading off screen past ~1.5x.
+        const originX = e.clientX - (rect.left + rect.width / 2)
+        const originY = e.clientY - (rect.top + rect.height / 2)
+        // Normalise the wheel delta; trackpads emit many small events and mouse
+        // wheels a few large ones, so cap the per-event step.
+        const step = Math.max(-ZOOM_WHEEL_STEP, Math.min(ZOOM_WHEEL_STEP, -e.deltaY * 0.002))
+        zoomAt(step, originX, originY)
+        return
+      }
+
+      // Zoomed in with the wheel bound to paging: let the wheel scroll the
+      // overflowing page rather than swallowing the event or turning the page.
+      if (zoomRef.current > 1) return
+      if (wheelAction !== 'page') return
+
+      e.preventDefault()
+      // One turn per swipe: a trackpad's momentum tail is part of the swipe that
+      // started it, not another turn (issue #485).
+      const magnitude = Math.max(Math.abs(e.deltaX), Math.abs(e.deltaY))
+      if (!isNewWheelGesture(magnitude, Date.now())) return
+      const wheelStep = mode === 'spread' ? 2 : 1
+      const absDx = Math.abs(e.deltaX)
+      const absDy = Math.abs(e.deltaY)
+      if (absDy > absDx) {
+        goToPage(currentPage + (e.deltaY > 0 ? wheelStep : -wheelStep), undefined, 'y')
+      } else if (absDx > absDy) {
+        goToPage(currentPage + (e.deltaX > 0 ? wheelStep : -wheelStep), undefined, 'x')
+      }
+    }
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => el.removeEventListener('wheel', handleWheel)
+  }, [mode, currentPage, wheelAction, goToPage, contentRef, zoomAt, zoomRef, isNewWheelGesture])
+
+  // Mouse drag-to-pan while zoomed. The touch path already pans; without this
+  // a mouse user who zooms in has no way to reach the rest of the page.
+  const handleMouseDown = (e: ReactMouseEvent) => {
+    if (mode === 'pdf' || zoomRef.current <= 1 || e.button !== 0) return
+    // Don't fight text selection over selectable page text.
+    if ((e.target as Element | null)?.closest?.('[data-selectable]')) return
+    e.preventDefault()
+    const startX = e.clientX
+    const startY = e.clientY
+    const startPan = { ...panRef.current }
+    const onMove = (ev: MouseEvent) => {
+      const z = zoomRef.current
+      setPan({
+        x: startPan.x + (ev.clientX - startX) / z,
+        y: startPan.y + (ev.clientY - startY) / z,
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const getPinchDist = (t1: TouchPoint, t2: TouchPoint) => {
+    const dx = t1.clientX - t2.clientX
+    const dy = t1.clientY - t2.clientY
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  const handleTouchStart = (e: ReactTouchEvent) => {
+    if (mode === 'pdf') return
+    if (e.touches.length === 2) {
+      // Two fingers — start pinch
+      gestureRef.current = {
+        type: 'pinch',
+        initialDist: getPinchDist(e.touches[0], e.touches[1]),
+        initialZoom: zoom,
+        initialPan: { ...pan },
+      }
+      touchStartRef.current = null
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0]
+      longPressFiredRef.current = false
+      // Start long-press timer — fires if finger stays still for 500 ms over a text span.
+      // touchAction:none suppresses native long-press selection, so we trigger it
+      // programmatically via the Selection API instead.
+      longPressTimerRef.current = setTimeout(() => {
+        const el = document.elementFromPoint(t.clientX, t.clientY)
+        if (!el?.closest('[data-selectable]')) return
+        const selection = window.getSelection()
+        if (!selection) return
+        const range = document.createRange()
+        range.selectNodeContents(el.closest('[data-selectable]')!)
+        selection.removeAllRanges()
+        selection.addRange(range)
+        longPressFiredRef.current = true
+      }, 500)
+
+      if (zoom > 1) {
+        gestureRef.current = {
+          type: 'pan',
+          startX: t.clientX,
+          startY: t.clientY,
+          startPan: { ...pan },
+        }
+      } else {
+        gestureRef.current = { type: 'swipe' }
+        touchStartRef.current = { x: t.clientX, y: t.clientY }
+      }
+    }
+  }
+
+  const handleTouchMove = (e: ReactTouchEvent) => {
+    if (mode === 'pdf' || !gestureRef.current) return
+    // Cancel long-press if finger moves more than 10 px
+    if (longPressTimerRef.current && e.touches.length === 1) {
+      const t = e.touches[0]
+      // Only a pan carries a start point; a pinch or swipe never cancels here.
+      const g = gestureRef.current as Partial<PanGesture>
+      if (
+        g.startX !== undefined &&
+        (Math.abs(t.clientX - g.startX) > 10 || Math.abs(t.clientY - g.startY!) > 10)
+      ) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
+    }
+    if (gestureRef.current.type === 'pinch' && e.touches.length === 2) {
+      const dist = getPinchDist(e.touches[0], e.touches[1])
+      const newZoom = Math.max(
+        MIN_ZOOM,
+        Math.min(MAX_ZOOM, gestureRef.current.initialZoom * (dist / gestureRef.current.initialDist))
+      )
+      setZoomDirect(newZoom)
+    } else if (gestureRef.current.type === 'pan' && e.touches.length === 1) {
+      const dx = (e.touches[0].clientX - gestureRef.current.startX) / zoom
+      const dy = (e.touches[0].clientY - gestureRef.current.startY) / zoom
+      setPan({ x: gestureRef.current.startPan.x + dx, y: gestureRef.current.startPan.y + dy })
+    }
+  }
+
+  const handleTouchEnd = (e: ReactTouchEvent) => {
+    if (mode === 'pdf') return
+    clearTimeout(longPressTimerRef.current ?? undefined)
+    longPressTimerRef.current = null
+    // Long-press fired — selection is active, don't navigate
+    if (longPressFiredRef.current) {
+      longPressFiredRef.current = false
+      gestureRef.current = null
+      touchStartRef.current = null
+      return
+    }
+    const type = gestureRef.current?.type
+    gestureRef.current = null
+    if (type === 'pinch') {
+      // Snap back to 1× if barely zoomed
+      if (zoomRef.current < 1.15) setZoomDirect(MIN_ZOOM)
+      return
+    }
+    if (type === 'pan') return
+    if (!touchStartRef.current) return
+    const step = mode === 'spread' ? 2 : 1
+    const t = e.changedTouches[0]
+    const dx = t.clientX - touchStartRef.current.x
+    const dy = t.clientY - touchStartRef.current.y
+    touchStartRef.current = null
+    const absDx = Math.abs(dx)
+    const absDy = Math.abs(dy)
+    if (absDx > 50 && absDx > absDy) {
+      if (dx < 0) goToPage(currentPage + step, undefined, 'x')
+      else goToPage(currentPage - step, undefined, 'x')
+    } else if (absDy > 50 && absDy > absDx) {
+      if (dy < 0) goToPage(currentPage + step, undefined, 'y')
+      else goToPage(currentPage - step, undefined, 'y')
+    }
+  }
+
+  return { handleTouchStart, handleTouchMove, handleTouchEnd, handleMouseDown }
+}

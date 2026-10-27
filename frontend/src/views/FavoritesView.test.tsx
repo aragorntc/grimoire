@@ -1,0 +1,181 @@
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import FavoritesView from './FavoritesView'
+import * as FavCtx from '../context/FavoritesContext'
+
+vi.mock('../context/FavoritesContext', () => ({ useFavorites: vi.fn() }))
+vi.mock('../api', () => ({ mediaUrl: (p: string) => `http://localhost${p}` }))
+
+// Signed out (no provider) unless a test sets a role: select mode is admin-only.
+let role: string | null = null
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => (role ? { user: { role } } : null),
+}))
+
+// The merge dialog has its own tests; here only the hand-off matters.
+vi.mock('../components/duplicates/MergeDialog', () => ({
+  default: ({
+    resourceType,
+    ids,
+    onDone,
+  }: {
+    resourceType: string
+    ids: string[]
+    onDone: (result: unknown) => void
+  }) => (
+    <button onClick={() => onDone({ action: 'merged', keepId: ids[0], removedIds: ids.slice(1) })}>
+      {`merge ${resourceType} ${ids.join(',')}`}
+    </button>
+  ),
+}))
+
+const reload = vi.fn()
+
+function renderWith(items: unknown) {
+  ;(FavCtx.useFavorites as Mock).mockReturnValue({
+    items,
+    isFavorite: () => true,
+    toggleFavorite: vi.fn(),
+    reload,
+  })
+  return render(
+    <MemoryRouter>
+      <FavoritesView />
+    </MemoryRouter>
+  )
+}
+
+const aMap = { item_type: 'map', item_id: 'm1', filename: 'Dungeon.png', has_thumbnail: false }
+const aModel = {
+  item_type: 'model',
+  item_id: 'md1',
+  filename: 'goblin.stl',
+  has_thumbnail: false,
+}
+const aBook = {
+  item_type: 'book',
+  item_id: 'b1',
+  title: 'Core Rules',
+  category: 'core',
+  page_count: 100,
+  has_thumbnail: false,
+}
+
+describe('FavoritesView', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.clearAllMocks()
+    role = null
+  })
+
+  it('offers select mode to admins only', () => {
+    renderWith([aBook])
+    expect(screen.queryByRole('button', { name: 'Select' })).not.toBeInTheDocument()
+  })
+
+  it('merges two selected copies of a favorite book, then reloads', () => {
+    role = 'admin'
+    const copy = { ...aBook, item_id: 'b2', title: 'Core Rules (1)' }
+    renderWith([aBook, copy, aMap])
+    fireEvent.click(screen.getByRole('button', { name: 'Select' }))
+
+    const merge = screen.getByRole('button', { name: /Merge/ })
+    fireEvent.click(screen.getByRole('button', { name: 'Select Core Rules' }))
+    expect(merge).toBeDisabled()
+    // A map and a book are never copies of each other.
+    fireEvent.click(screen.getByRole('button', { name: 'Select Dungeon.png' }))
+    expect(merge).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Select Dungeon.png' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select Core Rules (1)' }))
+    expect(merge).toBeEnabled()
+
+    fireEvent.click(merge)
+    fireEvent.click(screen.getByRole('button', { name: 'merge book b1,b2' }))
+    expect(reload).toHaveBeenCalled()
+  })
+
+  it('shows the empty state when there are no favorites', () => {
+    renderWith([])
+    expect(screen.getByText('No favorites yet')).toBeInTheDocument()
+  })
+
+  it('renders a section per content type', () => {
+    renderWith([aMap, aBook])
+    expect(screen.getByText('Maps (1)')).toBeInTheDocument()
+    expect(screen.getByText('Books (1)')).toBeInTheDocument()
+    expect(screen.getByText('Dungeon.png')).toBeInTheDocument()
+    expect(screen.getByText('Core Rules')).toBeInTheDocument()
+  })
+
+  it('renders a models section', () => {
+    renderWith([aModel])
+    expect(screen.getByText('Models (1)')).toBeInTheDocument()
+    expect(screen.getByText('goblin.stl')).toBeInTheDocument()
+  })
+
+  it('collapses a section when its header is clicked and persists the state', () => {
+    renderWith([aMap])
+    expect(screen.getByText('Dungeon.png')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Maps \(1\)/ }))
+    expect(screen.queryByText('Dungeon.png')).not.toBeInTheDocument()
+
+    // Persisted: a fresh render starts collapsed.
+    renderWith([aMap])
+    expect(screen.queryByText('Dungeon.png')).not.toBeInTheDocument()
+  })
+
+  it('renders books as rows (list mode) by default', () => {
+    // Books default to the list view style.
+    renderWith([aBook])
+    // The list row shows the page count meta that the grid card omits.
+    expect(screen.getByText(/100 pages/)).toBeInTheDocument()
+  })
+
+  it('renders books as a grid when the book view mode is set to card', () => {
+    localStorage.setItem('grimoire:user-prefs', JSON.stringify({ viewModes: { book: 'card' } }))
+    renderWith([aBook])
+    // Grid card omits the page-count meta line shown in the list row.
+    expect(screen.queryByText(/100 pages/)).not.toBeInTheDocument()
+    expect(screen.getByText('Core Rules')).toBeInTheDocument()
+  })
+
+  it('renders favorited tags as badge links that link to the tags page', () => {
+    const aTag = {
+      item_type: 'tag',
+      item_id: 'draw steel',
+      internal: 'draw steel',
+      display: 'Draw Steel',
+      count: 4,
+    }
+    renderWith([aTag])
+    // Tags are now real <Link> anchors (not buttons) so middle-click works natively.
+    const link = screen.getByRole('link', { name: 'Draw Steel' })
+    expect(link).toBeInTheDocument()
+    expect(link).toHaveAttribute('href', '/tags?tag=draw%20steel')
+  })
+
+  it('starts every section collapsed once there are more than 25 favorites', () => {
+    const maps = Array.from({ length: 20 }, (_, i) => ({ ...aMap, item_id: `m${i}` }))
+    const books = Array.from({ length: 6 }, (_, i) => ({ ...aBook, item_id: `b${i}` }))
+    renderWith([...maps, ...books])
+    expect(screen.getByRole('button', { name: /Maps \(20\)/ })).toHaveAttribute(
+      'aria-expanded',
+      'false'
+    )
+    expect(screen.queryByText('Core Rules')).not.toBeInTheDocument()
+
+    // A section the user opened stays open.
+    fireEvent.click(screen.getByRole('button', { name: /Books \(6\)/ }))
+    expect(screen.getAllByText('Core Rules')).toHaveLength(6)
+  })
+
+  it('leaves a single long section open', () => {
+    renderWith(Array.from({ length: 30 }, (_, i) => ({ ...aMap, item_id: `m${i}` })))
+    expect(screen.getByRole('button', { name: /Maps \(30\)/ })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+  })
+})

@@ -1,0 +1,181 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { Mock } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import GrimoireEmbedPicker from './GrimoireEmbedPicker'
+import { campaigns } from '../../api'
+
+// The api module is mocked above; reach its helpers as plain vi.fn()s.
+const campaignsMock = campaigns as unknown as Record<keyof typeof campaigns, Mock>
+
+vi.mock('../../api', () => ({
+  campaigns: {
+    listResources: vi.fn(),
+    listCategories: vi.fn(),
+    fileUrl: (cid: string, id: string) => `http://localhost/c/${cid}/f/${id}`,
+  },
+  mediaUrl: (p: string) => `http://localhost${p}`,
+}))
+vi.mock('./ImageUploadPanel', () => ({ default: () => <div>upload-panel</div> }))
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  campaignsMock.listCategories.mockResolvedValue([])
+})
+
+const resources = [
+  { id: 'r1', resource_type: 'audio', resource_id: 'a1', name: 'Tavern', has_thumbnail: true },
+  { id: 'r2', resource_type: 'map', resource_id: 'm1', name: 'Cave', has_thumbnail: false },
+  { id: 'r3', resource_type: 'book', resource_id: 'b1', name: 'PHB', has_thumbnail: false },
+]
+
+describe('GrimoireEmbedPicker', () => {
+  it('shows the first category by default and hides the others', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    // Books lead the built-in type order, so the book is the only row visible.
+    await waitFor(() => expect(screen.getByText('PHB')).toBeInTheDocument())
+    expect(screen.queryByText('Cave')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tavern')).not.toBeInTheDocument()
+  })
+
+  it('switches the listed resources when another category tab is picked', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    await userEvent.click(screen.getByRole('tab', { name: /maps/i }))
+    expect(screen.getByText('Cave')).toBeInTheDocument()
+    expect(screen.queryByText('PHB')).not.toBeInTheDocument()
+  })
+
+  it('labels each category tab with its item count', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    expect(screen.getByRole('tab', { name: /books \(1\)/i })).toBeInTheDocument()
+  })
+
+  it('groups by the campaign’s custom resource categories', async () => {
+    campaignsMock.listResources.mockResolvedValue([
+      { id: 'r1', resource_type: 'map', resource_id: 'm1', name: 'Cave', category_id: 'c9' },
+      { id: 'r2', resource_type: 'book', resource_id: 'b1', name: 'PHB' },
+    ])
+    campaignsMock.listCategories.mockResolvedValue([{ id: 'c9', name: 'Handouts', sort_order: 1 }])
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    // Custom categories lead, so the Handouts map shows before the book group.
+    await waitFor(() => expect(screen.getByText('Cave')).toBeInTheDocument())
+    expect(screen.getByRole('tab', { name: /handouts/i })).toBeInTheDocument()
+    expect(screen.queryByText('PHB')).not.toBeInTheDocument()
+  })
+
+  it('still lists resources when the categories request fails', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    campaignsMock.listCategories.mockRejectedValue(new Error('nope'))
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('PHB')).toBeInTheDocument())
+  })
+
+  it('inserts an [[audio:ID]] token when an audio resource is picked', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    const onInsert = vi.fn()
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={onInsert} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    await userEvent.click(screen.getByRole('tab', { name: /audio/i }))
+    await userEvent.click(screen.getByRole('button', { name: /insert/i }))
+    expect(onInsert).toHaveBeenCalledWith('[[audio:a1]]')
+  })
+
+  it('searches across every category, not just the open tab', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    // "Cave" is a map, behind another tab — searching must still surface it.
+    await userEvent.type(screen.getByPlaceholderText(/search/i), 'cave')
+    expect(screen.getByText('Cave')).toBeInTheDocument()
+    expect(screen.queryByText('PHB')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tavern')).not.toBeInTheDocument()
+  })
+
+  it('hides the category tabs while a search is active', async () => {
+    campaignsMock.listResources.mockResolvedValue(resources)
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    expect(screen.getAllByRole('tab').length).toBeGreaterThan(1)
+    await userEvent.type(screen.getByPlaceholderText(/search/i), 'cave')
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('shows an empty state when no resources are linked', async () => {
+    campaignsMock.listResources.mockResolvedValue([])
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText(/no.*resources|link/i)).toBeInTheDocument())
+  })
+
+  it('inserts a book embed with a page number', async () => {
+    campaignsMock.listResources.mockResolvedValue([
+      { id: 'r3', resource_type: 'book', resource_id: 'b1', name: 'PHB', has_thumbnail: false },
+    ])
+    const onInsert = vi.fn()
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={onInsert} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    // Book rows offer an "At page…" affordance.
+    await userEvent.click(screen.getByRole('button', { name: /at page/i }))
+    await userEvent.type(screen.getByPlaceholderText(/page/i), '42')
+    await userEvent.click(screen.getByRole('button', { name: /^insert$/i }))
+    expect(onInsert).toHaveBeenCalledWith('[[book:b1:42]]')
+  })
+
+  it('focuses the page input as soon as "at page" is clicked', async () => {
+    campaignsMock.listResources.mockResolvedValue([
+      { id: 'r3', resource_type: 'book', resource_id: 'b1', name: 'PHB', has_thumbnail: false },
+    ])
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    await userEvent.click(screen.getByRole('button', { name: /at page/i }))
+    expect(screen.getByPlaceholderText(/page/i)).toHaveFocus()
+  })
+
+  it('inserts the book embed when Enter is pressed in the page input', async () => {
+    campaignsMock.listResources.mockResolvedValue([
+      { id: 'r3', resource_type: 'book', resource_id: 'b1', name: 'PHB', has_thumbnail: false },
+    ])
+    const onInsert = vi.fn()
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={onInsert} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    await userEvent.click(screen.getByRole('button', { name: /at page/i }))
+    // The input is already focused, so typing goes straight to it.
+    await userEvent.keyboard('42{Enter}')
+    expect(onInsert).toHaveBeenCalledWith('[[book:b1:42]]')
+  })
+
+  it('inserts without a page when Enter is pressed on an empty page input', async () => {
+    campaignsMock.listResources.mockResolvedValue([
+      { id: 'r3', resource_type: 'book', resource_id: 'b1', name: 'PHB', has_thumbnail: false },
+    ])
+    const onInsert = vi.fn()
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={onInsert} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByText('PHB'))
+    await userEvent.click(screen.getByRole('button', { name: /at page/i }))
+    await userEvent.keyboard('{Enter}')
+    expect(onInsert).toHaveBeenCalledWith('[[book:b1]]')
+  })
+
+  it('opens the image upload panel', async () => {
+    campaignsMock.listResources.mockResolvedValue([])
+    render(<GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={vi.fn()} />)
+    await waitFor(() => screen.getByPlaceholderText(/search/i))
+    await userEvent.click(screen.getByTitle(/upload image/i))
+    expect(screen.getByText('upload-panel')).toBeInTheDocument()
+  })
+
+  it('closes when the backdrop is clicked', async () => {
+    campaignsMock.listResources.mockResolvedValue([])
+    const onClose = vi.fn()
+    const { container } = render(
+      <GrimoireEmbedPicker campaignId="c1" onInsert={vi.fn()} onClose={onClose} />
+    )
+    await waitFor(() => screen.getByPlaceholderText(/search/i))
+    await userEvent.click(container.firstChild as Element)
+    expect(onClose).toHaveBeenCalled()
+  })
+})

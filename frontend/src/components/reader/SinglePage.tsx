@@ -11,7 +11,7 @@ interface Props {
   getAlt: (page: number) => string
   zoom: number
   pan: { x: number; y: number }
-  axisRef: { current: string }
+  axisRef: { current: 'x' | 'y' }
   directionRef: { current: number }
   activeSearchQuery?: string | null
   activeHighlight?: string | null

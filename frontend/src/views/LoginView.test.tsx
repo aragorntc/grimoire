@@ -1,0 +1,217 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import LoginView from './LoginView'
+
+describe('LoginView', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('renders the GRIMOIRE heading', () => {
+    render(<LoginView onLogin={vi.fn()} />)
+    expect(screen.getByText('GRIMOIRE')).toBeInTheDocument()
+  })
+
+  it('renders username and password fields', () => {
+    render(<LoginView onLogin={vi.fn()} />)
+    expect(screen.getByLabelText('Username')).toBeInTheDocument()
+    expect(screen.getByLabelText('Password')).toBeInTheDocument()
+  })
+
+  it('toggles password visibility with the reveal button', async () => {
+    render(<LoginView onLogin={vi.fn()} />)
+    const input = screen.getByLabelText('Password')
+    expect(input).toHaveAttribute('type', 'password')
+
+    const toggle = screen.getByRole('button', { name: /show password/i })
+    fireEvent.click(toggle)
+    expect(input).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: /hide password/i })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /hide password/i }))
+    expect(input).toHaveAttribute('type', 'password')
+  })
+
+  it('calls onLogin with token and user on successful login', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ token: 'abc123', user: { username: 'admin', role: 'admin' } }),
+    })
+    const onLogin = vi.fn()
+
+    render(<LoginView onLogin={onLogin} />)
+    await userEvent.type(screen.getByLabelText('Username'), 'admin')
+    await userEvent.type(screen.getByLabelText('Password'), 'password123')
+    fireEvent.click(screen.getByRole('button', { name: /enter/i }))
+
+    await waitFor(() =>
+      expect(onLogin).toHaveBeenCalledWith('abc123', { username: 'admin', role: 'admin' })
+    )
+  })
+
+  it('sends trimmed username to the API', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ token: 't', user: {} }),
+    })
+
+    render(<LoginView onLogin={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('Username'), '  admin  ')
+    await userEvent.type(screen.getByLabelText('Password'), 'password')
+    fireEvent.click(screen.getByRole('button', { name: /enter/i }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    const loginCall = vi.mocked(fetch).mock.calls.find(([url]) => url === '/api/auth/login')
+    const body = JSON.parse(loginCall![1]!.body as string)
+    expect(body.username).toBe('admin')
+  })
+
+  it('shows the API error message on a failed login', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ detail: 'Invalid username or password' }),
+    })
+
+    render(<LoginView onLogin={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('Username'), 'wrong')
+    await userEvent.type(screen.getByLabelText('Password'), 'wrongpass')
+    fireEvent.click(screen.getByRole('button', { name: /enter/i }))
+
+    expect(await screen.findByText('Invalid username or password')).toBeInTheDocument()
+  })
+
+  it('shows a generic error when the server is unreachable', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
+
+    render(<LoginView onLogin={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('Username'), 'admin')
+    await userEvent.type(screen.getByLabelText('Password'), 'password')
+    fireEvent.click(screen.getByRole('button', { name: /enter/i }))
+
+    expect(await screen.findByText('Could not reach the server.')).toBeInTheDocument()
+  })
+
+  it('shows the guest invite field when guest access is enabled', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      if (url === '/api/auth/config') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ password_auth_enabled: true, guest_access_enabled: true }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+    })
+
+    render(<LoginView onLogin={vi.fn()} />)
+    const toggle = await screen.findByText(/have an invite code/i)
+    fireEvent.click(toggle)
+    expect(screen.getByLabelText('Invite Code')).toBeInTheDocument()
+  })
+
+  it('logs in as a guest and stashes the campaign id for redirect', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      if (url === '/api/auth/config') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ password_auth_enabled: true, guest_access_enabled: true }),
+        })
+      }
+      if (url === '/api/auth/guest-login') {
+        const body = {
+          token: 'gtok',
+          user: { username: 'guest_x', role: 'guest' },
+          campaign_id: 'camp42',
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          // api.ts reads the body as text and parses it itself (issue #270).
+          text: () => Promise.resolve(JSON.stringify(body)),
+          json: () => Promise.resolve(body),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+    })
+    const onLogin = vi.fn()
+
+    render(<LoginView onLogin={onLogin} />)
+    fireEvent.click(await screen.findByText(/have an invite code/i))
+    await userEvent.type(screen.getByLabelText('Invite Code'), 'abc1234567')
+    fireEvent.click(screen.getByRole('button', { name: /enter as guest/i }))
+
+    await waitFor(() =>
+      expect(onLogin).toHaveBeenCalledWith('gtok', {
+        username: 'guest_x',
+        role: 'guest',
+      })
+    )
+    expect(sessionStorage.getItem('grimoire:guest_campaign')).toBe('camp42')
+  })
+
+  it('disables the button and shows loading text while submitting', async () => {
+    // Never settles, so the form stays mid-submit.
+    globalThis.fetch = vi.fn().mockReturnValue(new Promise(() => {}))
+
+    render(<LoginView onLogin={vi.fn()} />)
+    await userEvent.type(screen.getByLabelText('Username'), 'admin')
+    await userEvent.type(screen.getByLabelText('Password'), 'password')
+    fireEvent.click(screen.getByRole('button', { name: /enter/i }))
+
+    const btn = screen.getByRole('button', { name: /entering/i })
+    expect(btn).toBeDisabled()
+  })
+
+  it('renders the admin-styled OIDC button with its icon', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      if (url === '/api/auth/config') {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              password_auth_enabled: false,
+              oidc_enabled: true,
+              oidc_button_text: 'Sign in with GitHub',
+              oidc_button_bg_color: '#24292f',
+              oidc_button_text_color: '#ffffff',
+              oidc_button_border_color: '#24292f',
+              oidc_button_radius: 6,
+              oidc_button_icon_url: '/api/auth/openid/button-icon?v=abc',
+            }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+    })
+
+    const { container } = render(<LoginView onLogin={vi.fn()} />)
+    const btn = await screen.findByRole('button', { name: 'Sign in with GitHub' })
+    expect(btn.style.background).toBe('rgb(36, 41, 47)')
+    expect(btn.style.color).toBe('rgb(255, 255, 255)')
+    expect(btn.style.borderRadius).toBe('6px')
+    expect(container.querySelector('button img')!.getAttribute('src')).toBe(
+      '/api/auth/openid/button-icon?v=abc'
+    )
+  })
+
+  describe('an OIDC token in the URL fragment', () => {
+    it('is stripped from the address bar and never used to sign in', async () => {
+      window.history.replaceState(null, '', '/login?x=1#oidc_token=attacker-token')
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ password_auth_enabled: true }),
+      })
+      const onLogin = vi.fn()
+      render(<LoginView onLogin={onLogin} />)
+      expect(window.location.hash).toBe('')
+      expect(window.location.search).toBe('?x=1')
+      // The login form still loads its config...
+      await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith('/api/auth/config'))
+      // ...and the token was never sent anywhere or handed to onLogin.
+      for (const [, init] of vi.mocked(globalThis.fetch).mock.calls) {
+        expect(JSON.stringify(init || {})).not.toContain('attacker-token')
+      }
+      expect(onLogin).not.toHaveBeenCalled()
+      window.history.replaceState(null, '', '/')
+    })
+  })
+})

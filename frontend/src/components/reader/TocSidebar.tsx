@@ -1,0 +1,102 @@
+import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LuList, LuX } from 'react-icons/lu'
+import api from '../../api'
+import Spinner from '../Spinner'
+import TocEntry from './TocEntry'
+import type { TocNode } from './TocEntry'
+import type { Schema } from '../../api'
+import ReaderSidebarShell from './ReaderSidebarShell'
+import { shouldAutoCollapse } from '../../utils/autoCollapse'
+
+interface Props {
+  bookId: string
+  currentPage: number
+  onGoToPage: (page: number) => void
+  onClose: () => void
+}
+
+function countEntries(nodes: TocNode[]): number {
+  return nodes.reduce((n: number, node) => n + 1 + countEntries(node.children || []), 0)
+}
+
+export default function TocSidebar({ bookId, currentPage, onGoToPage, onClose }: Props) {
+  const { t } = useTranslation()
+  const [toc, setToc] = useState<TocNode[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api
+      .get(`/books/${bookId}/toc`)
+      .then((r) => {
+        setToc((r as Schema<'TocResponse'>).toc)
+        setLoading(false)
+      })
+      .catch(() => {
+        setToc([])
+        setLoading(false)
+      })
+  }, [bookId])
+
+  // A long TOC starts with every entry collapsed, leaving the top-level
+  // chapters as the overview.
+  const startCollapsed = !!toc && shouldAutoCollapse(countEntries(toc), toc.length)
+
+  return (
+    <ReaderSidebarShell>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          padding: '10px 14px',
+          borderBottom: '1px solid var(--border)',
+        }}
+      >
+        <LuList size={14} color="var(--text-muted)" aria-hidden="true" />
+        <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: 'var(--text-dim)' }}>
+          {t('toc.sidebarTitle')}
+        </span>
+        <button
+          onClick={onClose}
+          aria-label={t('toc.closeToc')}
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--text-muted)',
+            display: 'flex',
+          }}
+        >
+          <LuX size={15} aria-hidden="true" />
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 4px' }}>
+        {loading && (
+          <div style={{ padding: 20, textAlign: 'center' }}>
+            <Spinner size={20} />
+          </div>
+        )}
+        {!loading && toc && toc.length === 0 && (
+          <div
+            style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}
+          >
+            {t('toc.noToc')}
+          </div>
+        )}
+        {!loading &&
+          toc &&
+          toc.map((node, i) => (
+            <TocEntry
+              key={i}
+              node={node}
+              currentPage={currentPage}
+              onGoToPage={onGoToPage}
+              depth={0}
+              startCollapsed={startCollapsed}
+            />
+          ))}
+      </div>
+    </ReaderSidebarShell>
+  )
+}

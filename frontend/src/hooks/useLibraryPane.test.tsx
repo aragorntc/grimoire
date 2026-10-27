@@ -1,0 +1,531 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { Mock } from 'vitest'
+import { renderHook, act, waitFor } from '@testing-library/react'
+import useLibraryPane, { type PaneRow } from './useLibraryPane'
+import { files as filesApi } from '../api'
+
+vi.mock('../api', () => ({ files: { browse: vi.fn() } }))
+
+// The fixtures below are partial listings, so the mock is typed loosely.
+const browse = vi.mocked(filesApi.browse) as unknown as Mock<(path: string) => Promise<unknown>>
+
+type EntryRow = Extract<PaneRow, { isOpen: boolean }>
+type NoteRow = Exclude<PaneRow, EntryRow>
+
+const dir = (name: string, parent: string) => ({
+  name,
+  path: `${parent}/${name}`,
+  is_dir: true,
+  child_count: 2,
+})
+const file = (name: string, parent: string) => ({
+  name,
+  path: `${parent}/${name}`,
+  is_dir: false,
+  size: 1,
+})
+
+const listing = (path: string, entries: object[] = [], extra: object = {}) => ({
+  path,
+  parent: '',
+  writable: true,
+  entries,
+  total: entries.length,
+  truncated: false,
+  ...extra,
+})
+
+// A two-level library: books/ holds a folder and a file; the folder holds one file.
+function stubTree() {
+  browse.mockImplementation((p) => {
+    if (p === 'books') {
+      return Promise.resolve(listing('books', [dir('core', 'books'), file('loose.pdf', 'books')]))
+    }
+    if (p === 'books/core') {
+      return Promise.resolve(listing('books/core', [file('phb.pdf', 'books/core')]))
+    }
+    return Promise.resolve(listing(p, []))
+  })
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  stubTree()
+})
+
+// The rows that hold an entry. While an expanded folder loads, a placeholder
+// row stands in for its children - so the row count can already be right before
+// they arrive, and waiting on it alone races the load.
+const loaded = (rows: PaneRow[]) => rows.filter((r) => r.entry)
+
+describe('useLibraryPane', () => {
+  it('reports whether the anchored folder hosts category folders', async () => {
+    browse.mockResolvedValue(listing('books/System', [], { category_host: true }))
+    const { result } = renderHook(() => useLibraryPane('books/System'))
+    await waitFor(() => expect(result.current.categoryHost).toBe(true))
+  })
+
+  it('defaults categoryHost to false where the server says nothing', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    // Absent rather than false in the response — an old server, or a folder
+    // outside the books tree — must not offer the scaffold action.
+    expect(result.current.categoryHost).toBe(false)
+  })
+
+  it('loads the initial path into rows', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(filesApi.browse).toHaveBeenCalledWith('books')
+    expect(result.current.rows.map((r) => r.entry!.name)).toEqual(['core', 'loose.pdf'])
+    expect(result.current.rows.every((r) => r.depth === 0)).toBe(true)
+  })
+
+  it('expands a folder in place, nesting its children below it', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(filesApi.browse).toHaveBeenCalledWith('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+
+    const [folder, child, sibling] = result.current.rows as EntryRow[]
+    expect(folder.entry.name).toBe('core')
+    expect(folder.isOpen).toBe(true)
+    // The child is nested under its parent, not appended to the end.
+    expect(child.entry.name).toBe('phb.pdf')
+    expect(child.depth).toBe(1)
+    expect(sibling.entry.name).toBe('loose.pdf')
+  })
+
+  it('collapsing hides children but keeps them cached', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    browse.mockClear()
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(result.current.rows).toHaveLength(2))
+
+    // Re-expanding is instant: no second fetch for an already-loaded folder.
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    expect(filesApi.browse).not.toHaveBeenCalled()
+  })
+
+  it('shows a loading placeholder while a subfolder is being fetched', async () => {
+    let release: () => void
+    browse.mockImplementation((p) => {
+      if (p === 'books') {
+        return Promise.resolve(listing('books', [dir('core', 'books')]))
+      }
+      return new Promise((resolve) => {
+        release = () => resolve(listing('books/core', [file('phb.pdf', 'books/core')]))
+      })
+    })
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.rows).toHaveLength(1))
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() =>
+      expect(result.current.rows.some((r) => r.placeholder === 'loading')).toBe(true)
+    )
+
+    await act(async () => {
+      release()
+    })
+    await waitFor(() => expect(result.current.rows.some((r) => r.placeholder)).toBe(false))
+  })
+
+  it('marks an expanded empty folder rather than showing nothing', async () => {
+    browse.mockImplementation((p) =>
+      Promise.resolve(
+        p === 'books' ? listing('books', [dir('empty', 'books')]) : listing('books/empty', [])
+      )
+    )
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.rows).toHaveLength(1))
+
+    act(() => result.current.toggleExpand('books/empty'))
+    await waitFor(() =>
+      expect(result.current.rows.some((r) => r.placeholder === 'empty')).toBe(true)
+    )
+  })
+
+  it('reports a truncated folder so a partial listing is never passed off as whole', async () => {
+    browse.mockImplementation(() =>
+      Promise.resolve(listing('books', [file('a.pdf', 'books')], { total: 48213, truncated: true }))
+    )
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    const note = result.current.rows.find((r) => r.placeholder === 'truncated') as
+      NoteRow | undefined
+    expect(note).toBeTruthy()
+    expect(note!.total).toBe(48213)
+    expect(note!.shown).toBe(1)
+  })
+
+  it('expand() opens without toggling an already-open folder shut', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.expand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+
+    // Spring-loaded drag hover calls this repeatedly; it must stay open.
+    act(() => result.current.expand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+  })
+
+  it('records an error instead of throwing when the folder cannot be read', async () => {
+    browse.mockRejectedValue(new Error('Path escapes the library root'))
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.error).toBe('Path escapes the library root'))
+    expect(result.current.rows).toEqual([])
+  })
+
+  it('surfaces a failed subfolder load inline, without losing the tree', async () => {
+    browse.mockImplementation((p) =>
+      p === 'books'
+        ? Promise.resolve(listing('books', [dir('core', 'books')]))
+        : Promise.reject(new Error('Permission denied'))
+    )
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.rows).toHaveLength(1))
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => {
+      const err = result.current.rows.find((r) => r.placeholder === 'error') as NoteRow | undefined
+      expect(err?.text).toBe('Permission denied')
+    })
+  })
+
+  it('clears expansion and selection when navigating elsewhere', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    act(() => result.current.selectOnly('books/loose.pdf'))
+
+    act(() => result.current.navigate('maps'))
+    await waitFor(() => expect(result.current.path).toBe('maps'))
+    expect(result.current.selected.size).toBe(0)
+    expect(result.current.expanded.size).toBe(0)
+  })
+
+  it('keeps the selection when a folder is expanded', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.selectOnly('books/loose.pdf'))
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    // Expanding does not remove anything from view, so the selection stands.
+    expect(result.current.selected.has('books/loose.pdf')).toBe(true)
+  })
+
+  it('toggles items in and out of the selection', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.toggle('books/loose.pdf'))
+    act(() => result.current.toggle('books/core'))
+    expect(result.current.selected.size).toBe(2)
+
+    act(() => result.current.toggle('books/loose.pdf'))
+    expect(result.current.selected.has('books/loose.pdf')).toBe(false)
+  })
+
+  it('selects every visible row, including expanded children', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+
+    act(() => result.current.selectAll())
+    expect(result.current.selected.size).toBe(3)
+
+    act(() => result.current.clearSelection())
+    expect(result.current.selected.size).toBe(0)
+  })
+
+  it('leaves rows with unreadable names out of select-all', async () => {
+    browse.mockResolvedValue(
+      listing('books', [
+        file('loose.pdf', 'books'),
+        { ...dir('M\ufffdRK BORG', 'books'), unreadable_name: true },
+      ])
+    )
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.rows).toHaveLength(2))
+
+    act(() => result.current.selectAll())
+    expect([...result.current.selected]).toEqual(['books/loose.pdf'])
+  })
+
+  it('refreshes every folder on screen, not just the root', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    browse.mockClear()
+
+    await act(async () => {
+      result.current.refresh()
+    })
+    // A move changes both ends, and either may be an expanded subfolder.
+    expect(filesApi.browse).toHaveBeenCalledWith('books')
+    expect(filesApi.browse).toHaveBeenCalledWith('books/core')
+  })
+
+  it('refreshPath reloads a collapsed folder and opens it', async () => {
+    // A folder created inside a collapsed parent is in a folder `refresh` has
+    // never loaded, so only re-reading what is on screen left it invisible.
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.expanded.has('books/core')).toBe(false)
+    browse.mockClear()
+
+    await act(async () => {
+      result.current.refreshPath('books/core')
+    })
+
+    expect(filesApi.browse).toHaveBeenCalledWith('books/core')
+    // Opening it is what actually puts the new row on screen.
+    await waitFor(() => expect(result.current.expanded.has('books/core')).toBe(true))
+  })
+
+  it('refreshPath re-reads an already-open folder without closing it', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    browse.mockClear()
+
+    await act(async () => {
+      result.current.refreshPath('books/core')
+    })
+
+    expect(filesApi.browse).toHaveBeenCalledWith('books/core')
+    expect(result.current.expanded.has('books/core')).toBe(true)
+  })
+
+  it('refreshPath reloads the pane root without expanding it', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    browse.mockClear()
+
+    await act(async () => {
+      result.current.refreshPath('books')
+    })
+
+    expect(filesApi.browse).toHaveBeenCalledWith('books')
+    // The root is already what the pane shows; it has no disclosure of its own.
+    expect(result.current.expanded.has('books')).toBe(false)
+  })
+
+  it('refreshPath re-fetches even while a load for that folder is in flight', async () => {
+    // The listing already being fetched was requested before the folder existed,
+    // so reusing it would show a stale folder and look like the create failed.
+    let resolveFirst: (() => void) | undefined
+    browse.mockImplementation((p) => {
+      if (p === 'books/core') {
+        return new Promise((res) => {
+          resolveFirst = () => res(listing('books/core', []))
+        })
+      }
+      return Promise.resolve(listing('books', [dir('core', 'books')]))
+    })
+
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(filesApi.browse).toHaveBeenCalledWith('books/core'))
+    const before = browse.mock.calls.filter((c) => c[0] === 'books/core').length
+
+    await act(async () => {
+      result.current.refreshPath('books/core')
+      resolveFirst?.()
+    })
+
+    const after = browse.mock.calls.filter((c) => c[0] === 'books/core').length
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('treats a null navigation target as the library root', async () => {
+    const { result } = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    act(() => result.current.navigate(null))
+    await waitFor(() => expect(result.current.path).toBe(''))
+  })
+})
+
+describe('useLibraryPane cursor', () => {
+  const ready = async () => {
+    const hook = renderHook(() => useLibraryPane('books'))
+    await waitFor(() => expect(hook.result.current.loading).toBe(false))
+    return hook
+  }
+
+  it('moves the cursor and selects the row it lands on', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+    expect(result.current.cursor).toBe('books/core')
+    expect([...result.current.selected]).toEqual(['books/core'])
+  })
+
+  it('moves the cursor without touching the selection when asked', async () => {
+    // How a discontiguous selection is built: pass over rows without
+    // collapsing the selection onto each one in turn.
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+    act(() => result.current.cursorTo('books/loose.pdf', { select: false }))
+    expect(result.current.cursor).toBe('books/loose.pdf')
+    expect([...result.current.selected]).toEqual(['books/core'])
+  })
+
+  it('selects the whole range between the anchor and the cursor', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+    act(() => result.current.cursorTo('books/loose.pdf', { extend: true }))
+    expect([...result.current.selected]).toEqual(['books/core', 'books/loose.pdf'])
+  })
+
+  it('re-anchors a range on each plain move, so the next extend measures from there', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+    act(() => result.current.cursorTo('books/loose.pdf'))
+    act(() => result.current.cursorTo('books/core', { extend: true }))
+    expect([...result.current.selected]).toEqual(['books/core', 'books/loose.pdf'])
+  })
+
+  it('falls back to a plain selection when the anchor has left the tree', async () => {
+    // Selecting nothing at all would be a worse answer than selecting the row
+    // the user actually arrowed onto.
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/gone'))
+    act(() => result.current.cursorTo('books/core', { extend: true }))
+    expect([...result.current.selected]).toEqual(['books/core'])
+  })
+
+  it('drops the cursor when a collapse hides its row', async () => {
+    // A collapsed subtree takes the cursor's neighbours with it, so there is
+    // nothing sensible to fall back to — unlike a delete, where the surviving
+    // sibling is exactly where the user wants to be.
+    const { result } = await ready()
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+
+    act(() => result.current.cursorTo('books/core/phb.pdf'))
+    expect(result.current.cursor).toBe('books/core/phb.pdf')
+
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(result.current.cursor).toBeNull())
+  })
+
+  it("falls back to the previous row when the cursor's row is deleted", async () => {
+    // Deleting a file and being sent back to the top of the list is the whole
+    // of issue #460: the next delete is usually the sibling right there.
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/loose.pdf'))
+
+    // The file is gone from the server's next listing.
+    browse.mockImplementation((p) =>
+      Promise.resolve(p === 'books' ? listing('books', [dir('core', 'books')]) : listing(p, []))
+    )
+    act(() => result.current.refresh())
+
+    await waitFor(() => expect(result.current.cursor).toBe('books/core'))
+    // The cursor moved, but nothing was silently selected in its place.
+    expect(result.current.selected.has('books/core')).toBe(false)
+  })
+
+  it('falls back to the next row when the deleted row was first', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+
+    browse.mockImplementation((p) =>
+      Promise.resolve(
+        p === 'books' ? listing('books', [file('loose.pdf', 'books')]) : listing(p, [])
+      )
+    )
+    act(() => result.current.refresh())
+
+    await waitFor(() => expect(result.current.cursor).toBe('books/loose.pdf'))
+  })
+
+  it('follows a renamed file to its new path rather than a neighbour', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/loose.pdf'))
+
+    browse.mockImplementation((p) =>
+      Promise.resolve(
+        p === 'books'
+          ? listing('books', [dir('core', 'books'), file('renamed.pdf', 'books')])
+          : listing(p, [])
+      )
+    )
+    act(() => result.current.cursorWhenReady('books/renamed.pdf'))
+    act(() => result.current.refresh())
+
+    await waitFor(() => expect(result.current.cursor).toBe('books/renamed.pdf'))
+    // The renamed file is the one thing the user is acting on, so it is selected
+    // too — unlike the delete fallback.
+    expect(result.current.selected.has('books/renamed.pdf')).toBe(true)
+  })
+
+  it('drops the cursor outright when pruneCursor is asked for', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/loose.pdf'))
+
+    browse.mockImplementation((p) =>
+      Promise.resolve(p === 'books' ? listing('books', [dir('core', 'books')]) : listing(p, []))
+    )
+    act(() => result.current.pruneCursor())
+    act(() => result.current.refresh())
+
+    await waitFor(() => expect(result.current.cursor).toBeNull())
+  })
+
+  it('keeps the cursor across an expand that leaves its row on screen', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/loose.pdf'))
+    act(() => result.current.toggleExpand('books/core'))
+    await waitFor(() => expect(loaded(result.current.rows)).toHaveLength(3))
+    expect(result.current.cursor).toBe('books/loose.pdf')
+  })
+
+  it('clears the cursor when navigating, alongside the selection', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+    act(() => result.current.navigate('books/core'))
+    await waitFor(() => expect(result.current.path).toBe('books/core'))
+    expect(result.current.cursor).toBeNull()
+    expect(result.current.selected.size).toBe(0)
+  })
+
+  it('clears the cursor along with the selection on Escape', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo('books/core'))
+    act(() => result.current.clearSelection())
+    expect(result.current.cursor).toBeNull()
+    expect(result.current.selected.size).toBe(0)
+  })
+
+  it('selects every row in the pane', async () => {
+    const { result } = await ready()
+    act(() => result.current.selectAll())
+    expect([...result.current.selected]).toEqual(['books/core', 'books/loose.pdf'])
+  })
+
+  it('ignores a move to nowhere', async () => {
+    const { result } = await ready()
+    act(() => result.current.cursorTo(null))
+    expect(result.current.cursor).toBeNull()
+  })
+})

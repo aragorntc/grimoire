@@ -1,0 +1,219 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, useNavigate } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import AppShell from './AppShell'
+
+vi.mock('../api', () => ({
+  default: { get: vi.fn().mockResolvedValue({ books: 1 }) },
+  settings: { getUi: vi.fn().mockResolvedValue({ hide_audio: false }) },
+}))
+let role = 'admin'
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ user: { role }, logout: vi.fn() }),
+}))
+let queue: { id: string }[] = []
+vi.mock('../context/AudioPlayerContext', () => ({
+  useAudioPlayer: () => ({ queue }),
+}))
+vi.mock('../context/UISettingsContext', () => ({
+  UISettingsProvider: ({ children }: { children?: ReactNode }) => children,
+}))
+vi.mock('../hooks/useScrollRestoration', () => ({ default: () => ({ current: null }) }))
+vi.mock('./Sidebar', () => ({ default: () => <nav>sidebar</nav> }))
+vi.mock('./MobileSidebar', () => ({ default: () => <nav>mobile-nav</nav> }))
+vi.mock('./audio/GlobalAudioPlayer', () => ({
+  default: () => <div data-testid="global-player" />,
+  PLAYER_HEIGHT: 72,
+}))
+// Stub all routed views so we only test the shell.
+vi.mock('./BookReader', () => ({ default: () => <div>reader</div> }))
+vi.mock('../views/LibraryView', () => ({ default: () => <div>library</div> }))
+vi.mock('../views/SystemDetailView', () => ({ default: () => <div>system</div> }))
+vi.mock('../views/MapsView', () => ({ default: () => <div>maps</div> }))
+vi.mock('./maps/MapDetailView', () => ({ default: () => <div>map-detail</div> }))
+vi.mock('../views/TokensView', () => ({ default: () => <div>tokens</div> }))
+vi.mock('./tokens/TokenDetailView', () => ({ default: () => <div>token-detail</div> }))
+vi.mock('../views/AudioView', () => ({ default: () => <div>audio</div> }))
+vi.mock('./audio/AudioDetailView', () => ({ default: () => <div>audio-detail</div> }))
+vi.mock('../views/SearchView', () => ({ default: () => <div>search</div> }))
+vi.mock('../views/SettingsView', () => ({ default: () => <div>settings</div> }))
+vi.mock('../views/FavoritesView', () => ({ default: () => <div>favorites</div> }))
+vi.mock('../views/CampaignsView', () => ({ default: () => <div>campaigns</div> }))
+vi.mock('../views/CampaignDetailView', () => ({ default: () => <div>campaign-detail</div> }))
+vi.mock('../views/CampaignNotesView', () => ({ default: () => <div>campaign-notes</div> }))
+// Throws while rendering when a test sets it, to exercise the error boundary.
+let tagsThrows = false
+vi.mock('../views/TagsView', () => ({
+  default: () => {
+    if (tagsThrows) throw new Error('render failed')
+    return <div>tags</div>
+  },
+}))
+vi.mock('./campaigns/PendingInvitesBanner', () => ({ default: () => null }))
+// Views are lazy chunks (issue #708). This one is held back until a test lets it
+// load, so the shell can be seen mid-fetch.
+const duplicatesChunk = vi.hoisted(() => {
+  let release!: (value?: unknown) => void
+  const loaded = new Promise((resolve) => (release = resolve))
+  return { loaded, release }
+})
+vi.mock('../views/DuplicatesView', async () => {
+  await duplicatesChunk.loaded
+  return { default: () => <div>duplicates</div> }
+})
+
+const renderAt = (path: string) =>
+  render(
+    <MemoryRouter initialEntries={[path]}>
+      <AppShell />
+    </MemoryRouter>
+  )
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  tagsThrows = false
+  queue = []
+  role = 'admin'
+  window.innerWidth = 1200 // desktop
+})
+
+describe('AppShell', () => {
+  it('shows a recovery panel for a view that throws, and recovers on navigation', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    tagsThrows = true
+    // Stands in for a sidebar link: the sidebar itself is stubbed out here.
+    function GoToAudio() {
+      const navigate = useNavigate()
+      return <button onClick={() => navigate('/audio')}>to audio</button>
+    }
+    render(
+      <MemoryRouter initialEntries={['/tags']}>
+        <AppShell />
+        <GoToAudio />
+      </MemoryRouter>
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong')
+    // The failure is contained to the routed content: the nav is still up.
+    expect(screen.getByText('sidebar')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'to audio' }))
+    expect(await screen.findByText('audio')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    consoleError.mockRestore()
+  })
+
+  it('renders the sidebar and the audio route on desktop', async () => {
+    renderAt('/audio')
+    expect(await screen.findByText('audio')).toBeInTheDocument()
+    expect(screen.getByText('sidebar')).toBeInTheDocument()
+    expect(screen.getByTestId('global-player')).toBeInTheDocument()
+  })
+
+  it('routes to the audio detail view', async () => {
+    renderAt('/audio/a1')
+    await waitFor(() => expect(screen.getByText('audio-detail')).toBeInTheDocument())
+  })
+
+  it('renders the mobile nav on small screens', async () => {
+    window.innerWidth = 500
+    renderAt('/library')
+    await waitFor(() => expect(screen.getByText('mobile-nav')).toBeInTheDocument())
+  })
+
+  it('keeps the player mounted when a queue is active', async () => {
+    queue = [{ id: 'a' }]
+    renderAt('/search')
+    await waitFor(() => expect(screen.getByTestId('global-player')).toBeInTheDocument())
+  })
+
+  it('keeps the shell up and shows a spinner while a view is still loading', async () => {
+    renderAt('/settings/duplicates')
+    expect(await screen.findByRole('status')).toBeInTheDocument()
+    expect(screen.getByText('sidebar')).toBeInTheDocument()
+    duplicatesChunk.release()
+    expect(await screen.findByText('duplicates')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  // Issue #361: a guest clicking a public campaign resource fell through to the
+  // catch-all and was bounced back to the campaign list instead of opening it.
+  describe('guest routes', () => {
+    beforeEach(() => {
+      role = 'guest'
+    })
+
+    it.each([
+      ['/library/book/b1', 'reader'],
+      ['/maps/m1', 'map-detail'],
+      ['/tokens/t1', 'token-detail'],
+      ['/audio/a1', 'audio-detail'],
+    ])('opens %s for a guest', async (path, expected) => {
+      renderAt(path)
+      await waitFor(() => expect(screen.getByText(expected)).toBeInTheDocument())
+      expect(screen.queryByText('campaigns')).not.toBeInTheDocument()
+    })
+
+    it.each(['/library', '/maps', '/tokens', '/audio', '/search', '/settings/account'])(
+      'still redirects a guest away from %s',
+      async (path) => {
+        renderAt(path)
+        await waitFor(() => expect(screen.getByText('campaigns')).toBeInTheDocument())
+      }
+    )
+
+    it('still renders the guest campaign detail view', async () => {
+      renderAt('/campaigns/c1/overview')
+      await waitFor(() => expect(screen.getByText('campaign-detail')).toBeInTheDocument())
+    })
+  })
+
+  // Full-height routes give `main` a fixed height and hand their own children
+  // the scrollbars. The tags page needs it so its list and detail columns can
+  // scroll independently instead of growing one shared page scrollbar.
+  describe('full-height routes', () => {
+    const main = () => document.querySelector('main')
+
+    it('makes the tags page full-height', async () => {
+      renderAt('/tags')
+      await waitFor(() => expect(screen.getByText('tags')).toBeInTheDocument())
+      expect(main()).toHaveStyle({ overflow: 'hidden' })
+      expect(main()).toHaveStyle({ display: 'flex' })
+    })
+
+    it('leaves an ordinary page scrolling normally', async () => {
+      renderAt('/maps')
+      await waitFor(() => expect(screen.getByText('maps')).toBeInTheDocument())
+      expect(main()).toHaveStyle({ overflow: 'auto' })
+    })
+  })
+
+  // On mobile `100vh` is the height with the browser toolbar hidden, so while
+  // it shows the bottom of the layout - the foot of a reader page - sat under
+  // the fixed nav bar (issue #520). The shell's height lives in index.css so it
+  // can declare `100dvh` with a `100vh` fallback; jsdom doesn't load that
+  // stylesheet, so check the class contract and the rule separately.
+  describe('viewport height (issue #520)', () => {
+    it('sizes the shell through the .app-shell class, not an inline 100vh', async () => {
+      renderAt('/library/book/1')
+      await waitFor(() => expect(screen.getByText('reader')).toBeInTheDocument())
+      const shell = document.querySelector<HTMLElement>('.app-shell')
+      expect(shell).toBeTruthy()
+      expect(shell!.style.height).toBe('')
+      expect(shell).toContainElement(document.querySelector('main'))
+    })
+
+    it('gives .app-shell the dynamic viewport height with a 100vh fallback', () => {
+      const css = readFileSync(resolve(process.cwd(), 'src/index.css'), 'utf8')
+      const rule = css.match(/\.app-shell\s*{([^}]*)}/)
+      expect(rule).toBeTruthy()
+      const body = rule![1]
+      expect(body).toMatch(/display:\s*flex/)
+      // Order matters: the fallback must come first so dvh wins where supported.
+      expect(body.indexOf('height: 100vh')).toBeGreaterThan(-1)
+      expect(body.indexOf('height: 100dvh')).toBeGreaterThan(body.indexOf('height: 100vh'))
+    })
+  })
+})

@@ -1,0 +1,448 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
+import type { CSSProperties } from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  LuBookOpen,
+  LuChevronLeft,
+  LuChevronRight,
+  LuFileText,
+  LuColumns2,
+  LuFile,
+  LuPanelLeft,
+  LuScissors,
+} from 'react-icons/lu'
+import type { IconType } from 'react-icons'
+import { mediaUrl } from '../../api'
+import useReaderGestures from '../../hooks/useReaderGestures'
+import { getUserPrefs } from '../../hooks/useUserPrefs'
+import { getBookPrefs, saveBookPrefs } from '../../hooks/useBookPrefs'
+import SinglePage from '../reader/SinglePage'
+import SpreadPage from '../reader/SpreadPage'
+import { PAGE_WIDTH, SPREAD_WIDTH } from '../reader/pageRender'
+import CutoutStage from '../reader/export/CutoutStage'
+import ExportSidebar from '../reader/export/ExportSidebar'
+import usePageExport from '../reader/export/usePageExport'
+
+type ViewMode = 'page' | 'spread' | 'pdf'
+
+export interface MapPdfViewerProps {
+  mapId: string
+  filename: string
+  relativePath?: string
+  totalPages: number
+  isMobilePhone?: boolean
+}
+
+const MODES: { key: ViewMode; Icon: IconType }[] = [
+  { key: 'page', Icon: LuFileText },
+  { key: 'spread', Icon: LuColumns2 },
+  { key: 'pdf', Icon: LuFile },
+]
+
+const toolbarBtn = (active: boolean): CSSProperties => ({
+  background: active ? 'var(--bg-card-hover)' : 'var(--bg-card)',
+  color: active ? 'var(--gold)' : 'var(--text-dim)',
+  border: 'none',
+  padding: '5px 12px',
+  cursor: 'pointer',
+  fontSize: 13,
+  display: 'flex',
+  alignItems: 'center',
+  gap: 5,
+})
+
+const stepBtn: CSSProperties = {
+  background: 'var(--bg-card)',
+  border: '1px solid var(--border)',
+  color: 'var(--text)',
+  borderRadius: 4,
+  padding: '4px 8px',
+  display: 'flex',
+  alignItems: 'center',
+  cursor: 'pointer',
+}
+
+/**
+ * PDF map viewer with the same single / spread / raw-PDF modes as the book
+ * reader, but without the text-highlight overlay. `mapId` identifies the map,
+ * `filename` is used for the raw-PDF iframe title, and `totalPages` is the PDF
+ * page count. `relativePath` is the map's library path, where "Save to library"
+ * suggests putting exported pages and cut-outs.
+ *
+ * Export (issue #207) is the reader's: the same panel and cut-out stage, pointed
+ * at the map endpoints.
+ */
+export default function MapPdfViewer({
+  mapId,
+  filename,
+  relativePath,
+  totalPages,
+  isMobilePhone,
+}: MapPdfViewerProps) {
+  const { t } = useTranslation()
+
+  const _prefs = getBookPrefs(`map:${mapId}`)
+  const _userPrefs = getUserPrefs()
+  const _globalMode = ['page', 'spread', 'pdf'].includes(_userPrefs.readerMode as string)
+    ? _userPrefs.readerMode
+    : null
+  const initialMode = isMobilePhone
+    ? 'page'
+    : (_globalMode ??
+      (['page', 'spread', 'pdf'].includes(_prefs.mode as string) ? _prefs.mode : 'page'))
+  const initialSpreadOffset = _prefs.spreadOffset ?? 0
+  // A battle map drawn across two pages reads best joined (issue #588).
+  const initialJoinSpread = _prefs.joinSpread === true
+
+  const [mode, setMode] = useState<ViewMode>(initialMode as ViewMode)
+  const [spreadOffset, setSpreadOffset] = useState(initialSpreadOffset)
+  const [joinSpread, setJoinSpread] = useState(initialJoinSpread)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageInput, setPageInput] = useState('1')
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+
+  const directionRef = useRef(1)
+  const axisRef = useRef<'x' | 'y'>('x')
+  const currentPageRef = useRef(1)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const preloadCacheRef = useRef<Record<string, HTMLImageElement>>({})
+
+  const pageUrl = useCallback(
+    (p: number, width?: number) => mediaUrl(`/maps/${mapId}/page/${p}`, { width }),
+    [mapId]
+  )
+
+  const goToPage = useCallback(
+    (p: number, currentMode?: string, axis: 'x' | 'y' = 'x') => {
+      if (totalPages === 0) return
+      let page = Math.max(1, Math.min(p, totalPages))
+      if ((currentMode ?? mode) === 'spread') {
+        const isLeftPage = spreadOffset === 1 ? page % 2 !== 0 : page % 2 === 0 || page === 1
+        if (!isLeftPage) page = page - 1
+      }
+      directionRef.current = page >= currentPageRef.current ? 1 : -1
+      axisRef.current = axis
+      currentPageRef.current = page
+      setCurrentPage(page)
+      setPageInput(String(page))
+    },
+    [totalPages, mode, spreadOffset]
+  )
+
+  // Reset zoom/pan when the page changes.
+  useEffect(() => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }, [currentPage])
+
+  // Re-snap the current page to a valid left page when spread settings change.
+  useEffect(() => {
+    if (mode === 'spread') goToPage(currentPageRef.current, 'spread')
+  }, [mode, spreadOffset]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Preload neighbouring pages for snappy navigation.
+  useEffect(() => {
+    if (mode === 'pdf') return
+    const w = mode === 'spread' ? SPREAD_WIDTH : PAGE_WIDTH
+    const forward = directionRef.current >= 0
+    const ahead = mode === 'spread' ? 12 : 6
+    const behind = mode === 'spread' ? 4 : 2
+    const start = currentPage - (forward ? behind : ahead)
+    const end = currentPage + (forward ? ahead : behind)
+    const visible = new Set(mode === 'spread' ? [currentPage, currentPage + 1] : [currentPage])
+    for (let p = start; p <= end; p++) {
+      if (p < 1 || p > totalPages || visible.has(p)) continue
+      const key = `${p}:${w}`
+      if (!preloadCacheRef.current[key]) {
+        const img = new Image()
+        img.src = pageUrl(p, w)
+        preloadCacheRef.current[key] = img
+      }
+    }
+  }, [currentPage, mode, totalPages, pageUrl])
+
+  const step = mode === 'spread' ? 2 : 1
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
+      if (mode === 'pdf') return
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        goToPage(currentPage - step, undefined, 'x')
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        goToPage(currentPage + step, undefined, 'x')
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        goToPage(currentPage - step, undefined, 'y')
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        goToPage(currentPage + step, undefined, 'y')
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [mode, currentPage, step, goToPage])
+
+  const wheelNav = getUserPrefs().wheelNav !== false
+  // Known mismatch, left as it is: the hook's options are now zoomRef, panRef,
+  // setZoomDirect, zoomAt and wheelAction, and this caller still passes the
+  // older setZoom/wheelNav. The cast keeps the call exactly as it runs today.
+  const { handleTouchStart, handleTouchMove, handleTouchEnd } = useReaderGestures({
+    mode,
+    currentPage,
+    zoom,
+    pan,
+    setZoom,
+    setPan,
+    goToPage,
+    contentRef,
+    wheelNav,
+  } as unknown as Parameters<typeof useReaderGestures>[0])
+
+  const rightPage = currentPage + 1
+  const hasRight =
+    mode === 'spread' && (spreadOffset === 1 || currentPage !== 1) && rightPage <= totalPages
+
+  const [exportOpen, setExportOpen] = useState(false)
+  const exporter = usePageExport({
+    basePath: `/maps/${mapId}`,
+    title: (filename || '').replace(/\.[^.]+$/, ''),
+    visiblePages: hasRight ? [currentPage, rightPage] : [currentPage],
+    active: exportOpen,
+  })
+  const showStage = exportOpen && exporter.tab === 'cut'
+  const toggleExport = () => {
+    if (exportOpen) {
+      setExportOpen(false)
+      return
+    }
+    // The browser's own PDF viewer has no page to draw on or count from.
+    if (mode === 'pdf') setMode('page')
+    exporter.openAt(hasRight ? [currentPage, rightPage] : [currentPage])
+    setExportOpen(true)
+  }
+
+  const getAlt = (p: number) => `${t('reader.page')} ${p} — ${filename}`
+
+  const changeMode = (key: ViewMode) => {
+    setMode(key)
+    saveBookPrefs(`map:${mapId}`, { mode: key })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
+      {/* Sub-toolbar: page nav + mode toggle */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '8px 16px',
+          background: 'var(--bg-panel)',
+          borderBottom: '1px solid var(--border)',
+          flexWrap: 'wrap',
+          flexShrink: 0,
+        }}
+      >
+        {mode !== 'pdf' && totalPages > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              onClick={() => goToPage(currentPage - step)}
+              disabled={currentPage <= 1}
+              aria-label={t('reader.previousPage')}
+              style={{ ...stepBtn, opacity: currentPage <= 1 ? 0.4 : 1 }}
+            >
+              <LuChevronLeft size={14} />
+            </button>
+            <input
+              type="text"
+              value={pageInput}
+              onChange={(e) => setPageInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && goToPage(parseInt(pageInput) || 1)}
+              onBlur={() => goToPage(parseInt(pageInput) || 1)}
+              aria-label={t('reader.currentPageNumber')}
+              style={{ width: 50, textAlign: 'center', padding: '4px 6px', fontSize: 15 }}
+            />
+            {mode === 'spread' && hasRight && (
+              <span style={{ fontSize: 15, color: 'var(--text-muted)' }}>– {rightPage}</span>
+            )}
+            <span style={{ fontSize: 15, color: 'var(--text-muted)' }}>
+              {t('common.pageOf', { total: totalPages })}
+            </span>
+            <button
+              onClick={() => goToPage(currentPage + step)}
+              disabled={currentPage >= totalPages}
+              aria-label={t('reader.nextPage')}
+              style={{ ...stepBtn, opacity: currentPage >= totalPages ? 0.4 : 1 }}
+            >
+              <LuChevronRight size={14} />
+            </button>
+          </div>
+        )}
+
+        <div style={{ flex: 1 }} />
+
+        {/* Mode toggle — hidden on mobile phones (forced to single page) */}
+        <div
+          style={{
+            display: isMobilePhone ? 'none' : 'flex',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            overflow: 'hidden',
+          }}
+        >
+          {MODES.map(({ key, Icon }) => (
+            <button
+              key={key}
+              onClick={() => changeMode(key)}
+              title={t(`reader.${key}`)}
+              style={{
+                ...toolbarBtn(mode === key),
+                borderRight: key !== 'pdf' ? '1px solid var(--border)' : 'none',
+              }}
+            >
+              <Icon size={13} /> {t(`reader.${key}`)}
+            </button>
+          ))}
+        </div>
+
+        {/* Spread offset toggle — only in spread mode */}
+        {mode === 'spread' && !isMobilePhone && (
+          <button
+            onClick={() => {
+              const next = spreadOffset === 0 ? 1 : 0
+              setSpreadOffset(next)
+              saveBookPrefs(`map:${mapId}`, { spreadOffset: next })
+            }}
+            title={
+              spreadOffset === 0 ? t('reader.spreadIncludeCover') : t('reader.spreadExcludeCover')
+            }
+            style={{
+              ...toolbarBtn(spreadOffset === 1),
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+            }}
+          >
+            <LuPanelLeft size={13} /> {t('reader.spreadCover')}
+          </button>
+        )}
+        {mode === 'spread' && !isMobilePhone && (
+          <button
+            onClick={() => {
+              const next = !joinSpread
+              setJoinSpread(next)
+              saveBookPrefs(`map:${mapId}`, { joinSpread: next })
+            }}
+            aria-pressed={joinSpread}
+            title={t('reader.spreadJoinPagesHint')}
+            style={{
+              ...toolbarBtn(joinSpread),
+              border: '1px solid var(--border)',
+              borderRadius: 6,
+            }}
+          >
+            <LuBookOpen size={13} /> {t('reader.spreadJoinPages')}
+          </button>
+        )}
+
+        <button
+          onClick={toggleExport}
+          aria-pressed={exportOpen}
+          title={t('pageExport.menuItem')}
+          style={{
+            ...toolbarBtn(exportOpen),
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+          }}
+        >
+          <LuScissors size={13} aria-hidden="true" />
+          {!isMobilePhone && t('pageExport.title')}
+        </button>
+      </div>
+
+      {/* Page content, with the export panel beside it (or, on a phone with
+          the cut-out stage up, beneath it). */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: isMobilePhone && showStage ? 'column' : 'row',
+        }}
+      >
+        <div
+          ref={contentRef}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: 'hidden',
+            display: (isMobilePhone && exportOpen) || showStage ? 'none' : 'flex',
+            background: 'var(--bg-deep)',
+            touchAction: 'none',
+          }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {mode === 'pdf' ? (
+            <iframe
+              src={mediaUrl(`/maps/${mapId}/file`) + `#page=${currentPage}`}
+              style={{ width: '100%', height: '100%', border: 'none' }}
+              title={filename}
+            />
+          ) : mode === 'spread' ? (
+            <SpreadPage
+              currentPage={currentPage}
+              rightPage={rightPage}
+              hasRight={hasRight}
+              getAlt={getAlt}
+              zoom={zoom}
+              pan={pan}
+              axisRef={axisRef}
+              directionRef={directionRef}
+              pageUrl={pageUrl}
+              joined={joinSpread}
+            />
+          ) : (
+            <SinglePage
+              currentPage={currentPage}
+              getAlt={getAlt}
+              zoom={zoom}
+              pan={pan}
+              axisRef={axisRef}
+              directionRef={directionRef}
+              pageUrl={pageUrl}
+            />
+          )}
+        </div>
+
+        {showStage && (
+          <CutoutStage exporter={exporter} pageUrl={pageUrl} zoom={zoom} getAlt={getAlt} />
+        )}
+
+        {exportOpen && (
+          <ExportSidebar
+            exporter={exporter}
+            title={(filename || '').replace(/\.[^.]+$/, '')}
+            totalPages={totalPages}
+            currentPage={currentPage}
+            isSpread={mode === 'spread'}
+            spreadOffset={spreadOffset}
+            pageUrl={pageUrl}
+            sourcePath={relativePath}
+            onShowPage={(page: number) => goToPage(page)}
+            onClose={() => setExportOpen(false)}
+          />
+        )}
+      </div>
+    </div>
+  )
+}

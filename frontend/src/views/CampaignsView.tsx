@@ -1,0 +1,417 @@
+import { useState, useEffect, type CSSProperties } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+import { LuScroll, LuPlus, LuMailOpen, LuArchive } from 'react-icons/lu'
+import { campaigns, type Schema } from '../api'
+import { useAuth } from '../context/AuthContext'
+import Spinner from '../components/Spinner'
+import CampaignEditor from '../components/campaigns/CampaignEditor'
+import CampaignCard from '../components/campaigns/CampaignCard'
+import CalendarMenu from '../components/campaigns/CalendarMenu'
+import useIsMobile from '../hooks/useIsMobile'
+
+type Campaign = Schema<'CampaignOut'>
+
+const CARD_GRID: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+  gap: 14,
+  alignItems: 'start',
+}
+
+export default function CampaignsView() {
+  const { t } = useTranslation()
+  const { user } = useAuth()!
+  const navigate = useNavigate()
+  // Phone-width only: the three header controls don't fit beside the title at
+  // 375px (worse in locales with longer labels), so they move to their own row
+  // and shed their text labels there.
+  const isMobilePhone = useIsMobile(640)
+  const [list, setList] = useState<Campaign[] | null>(null)
+  const [showEditor, setShowEditor] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // When off (the default) the server omits archived campaigns entirely, so
+  // finished games stay out of the way until they're asked for.
+  const [showArchived, setShowArchived] = useState(false)
+
+  const isGmOrAdmin = user?.role === 'admin' || user?.role === 'gm'
+  // campaign_access defaults to enabled when the field is absent (older tokens).
+  // Only the /auth/me shape carries it, so a just-logged-in user reads as enabled.
+  const canCreate = (user as { campaign_access?: boolean } | null)?.campaign_access !== false
+
+  const load = (includeArchived = showArchived) => {
+    campaigns
+      .list(includeArchived)
+      .then(setList)
+      .catch((e: Error) => setError(e.message))
+  }
+
+  useEffect(() => {
+    // Refetch on toggle: archived campaigns aren't in the current payload to
+    // filter client-side. `load` is stable enough here — it only closes over
+    // setState setters and the flag passed explicitly.
+    load(showArchived)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showArchived])
+
+  // Most recently accessed (by any user) first; campaigns never opened fall last.
+  const byRecentAccess = (a: Campaign, b: Campaign) =>
+    (b.last_accessed_at || '').localeCompare(a.last_accessed_at || '')
+
+  const invitations = list?.filter((c) => c.invitation_status === 'invited') ?? []
+  const accepted = (list?.filter((c) => c.invitation_status !== 'invited') ?? []).sort(
+    byRecentAccess
+  )
+  // Archived campaigns get their own section rather than being mixed into the
+  // GM/joined/personal groups, so switching the toggle on doesn't reshuffle the
+  // active lists.
+  const active = accepted.filter((c) => !c.is_archived)
+  const archivedCampaigns = accepted.filter((c) => c.is_archived)
+  const gmCampaigns = active.filter((c) => c.owner_id === user?.id && c.is_gm_campaign)
+  const personalCampaigns = active.filter((c) => c.owner_id === user?.id && !c.is_gm_campaign)
+  const joinedCampaigns = active.filter((c) => c.owner_id !== user?.id)
+
+  const respondToInvite = async (campaign: Campaign, status: string) => {
+    await campaigns.updateMember(campaign.id, user!.id, status)
+    load()
+    // Let the app-level invite banner drop this invite too.
+    window.dispatchEvent(new CustomEvent('grimoire:campaigns-changed'))
+  }
+
+  return (
+    <div className="fade-in" style={{ padding: 24, maxWidth: 1400, margin: '0 auto' }}>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: isMobilePhone ? 'column' : 'row',
+          alignItems: isMobilePhone ? 'stretch' : 'center',
+          justifyContent: 'space-between',
+          gap: isMobilePhone ? 12 : 0,
+          marginBottom: 28,
+        }}
+      >
+        <h2
+          style={{ fontSize: 22, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10 }}
+        >
+          <LuScroll size={20} color="var(--gold)" style={{ flexShrink: 0 }} />{' '}
+          {t('campaigns.title')}
+        </h2>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            flexWrap: 'wrap',
+            flexShrink: 0,
+          }}
+        >
+          {/* Global "all my campaigns" feed — no campaign prop, so the menu
+              offers only the subscription link. */}
+          <CalendarMenu style={{ padding: '8px 14px', fontSize: 13 }} iconOnly={isMobilePhone} />
+          <button
+            onClick={() => setShowArchived((v) => !v)}
+            aria-pressed={showArchived}
+            aria-label={isMobilePhone ? t('campaigns.showArchived') : undefined}
+            title={t('campaigns.showArchivedHint')}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '8px 14px',
+              background: showArchived ? 'var(--bg-deep)' : 'var(--bg-card)',
+              border: `1px solid ${showArchived ? 'var(--gold-dim)' : 'var(--border)'}`,
+              borderRadius: 8,
+              color: showArchived ? 'var(--gold)' : 'var(--text-dim)',
+              cursor: 'pointer',
+              fontSize: 13,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <LuArchive size={14} style={{ flexShrink: 0 }} />
+            {!isMobilePhone && t('campaigns.showArchived')}
+          </button>
+          {canCreate ? (
+            <button
+              onClick={() => setShowEditor(true)}
+              aria-label={isMobilePhone ? t('campaigns.newCampaign') : undefined}
+              title={isMobilePhone ? t('campaigns.newCampaign') : undefined}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '8px 16px',
+                background: 'var(--bg-card)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                color: 'var(--text-dim)',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <LuPlus size={16} style={{ flexShrink: 0 }} />
+              {!isMobilePhone && t('campaigns.newCampaign')}
+            </button>
+          ) : (
+            <span
+              title={t('campaigns.accessDisabledHint')}
+              style={{ fontSize: 13, color: 'var(--text-dim)', fontStyle: 'italic' }}
+            >
+              {t('campaigns.accessDisabled')}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <div
+          style={{
+            color: 'var(--danger)',
+            background: 'var(--bg-card)',
+            border: '1px solid var(--danger)',
+            borderRadius: 8,
+            padding: '12px 16px',
+            marginBottom: 20,
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {list === null ? (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: 60 }}>
+          <Spinner size={28} />
+        </div>
+      ) : list.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--text-muted)' }}>
+          <LuScroll size={40} style={{ marginBottom: 16, opacity: 0.3 }} />
+          <div style={{ fontSize: 18, fontWeight: 500, marginBottom: 8 }}>
+            {t('campaigns.noCampaigns')}
+          </div>
+          <div style={{ fontSize: 14 }}>{t('campaigns.noCampaignsHint')}</div>
+        </div>
+      ) : (
+        <>
+          {invitations.length > 0 && (
+            <section style={{ marginBottom: 32 }}>
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  marginBottom: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <LuMailOpen size={13} /> {t('campaigns.invitations')}
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {invitations.map((c) => (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 14,
+                      padding: '14px 18px',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 9,
+                        flexShrink: 0,
+                        background: 'var(--bg-deep)',
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <LuScroll size={18} color="var(--gold)" />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 16,
+                          fontWeight: 600,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {c.name}
+                      </div>
+                      {c.description && (
+                        <div
+                          style={{
+                            fontSize: 13,
+                            color: 'var(--text-dim)',
+                            marginTop: 2,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {c.description}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                      <button
+                        onClick={() => respondToInvite(c, 'accepted')}
+                        style={{
+                          padding: '7px 16px',
+                          borderRadius: 7,
+                          background: 'var(--gold-dim)',
+                          border: 'none',
+                          color: 'var(--bg-deep)',
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {t('campaigns.accept')}
+                      </button>
+                      <button
+                        onClick={() => respondToInvite(c, 'declined')}
+                        style={{
+                          padding: '7px 16px',
+                          borderRadius: 7,
+                          background: 'var(--bg-deep)',
+                          border: '1px solid var(--border)',
+                          color: 'var(--text-muted)',
+                          fontSize: 13,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {t('campaigns.decline')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          {gmCampaigns.length > 0 && (
+            <section style={{ marginBottom: 32 }}>
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  marginBottom: 12,
+                }}
+              >
+                {t('campaigns.gmCampaigns')}
+              </h3>
+              <div style={CARD_GRID}>
+                {gmCampaigns.map((c) => (
+                  <CampaignCard key={c.id} campaign={c} userId={user?.id} subtitle={c.gm_title} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {joinedCampaigns.length > 0 && (
+            <section style={{ marginBottom: 32 }}>
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  marginBottom: 12,
+                }}
+              >
+                {t('campaigns.joinedCampaigns')}
+              </h3>
+              <div style={CARD_GRID}>
+                {joinedCampaigns.map((c) => (
+                  <CampaignCard
+                    key={c.id}
+                    campaign={c}
+                    userId={user?.id}
+                    subtitle={t('campaigns.gm', {
+                      name: c.owner_display_name || t('campaigns.unknownGm'),
+                    })}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {personalCampaigns.length > 0 && (
+            <section style={{ marginBottom: 32 }}>
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  marginBottom: 12,
+                }}
+              >
+                {t('campaigns.personalCampaigns')}
+              </h3>
+              <div style={CARD_GRID}>
+                {personalCampaigns.map((c) => (
+                  <CampaignCard key={c.id} campaign={c} userId={user?.id} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {showArchived && archivedCampaigns.length > 0 && (
+            <section style={{ marginBottom: 32 }}>
+              <h3
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: 'var(--text-muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  marginBottom: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <LuArchive size={13} /> {t('campaigns.archivedCampaigns')}
+              </h3>
+              <div style={CARD_GRID}>
+                {archivedCampaigns.map((c) => (
+                  <CampaignCard key={c.id} campaign={c} userId={user?.id} />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+
+      {showEditor && (
+        <CampaignEditor
+          isGmOrAdmin={isGmOrAdmin}
+          onClose={() => setShowEditor(false)}
+          onSaved={(c: Campaign) => {
+            setShowEditor(false)
+            navigate(`/campaigns/${c.id}`)
+          }}
+        />
+      )}
+    </div>
+  )
+}

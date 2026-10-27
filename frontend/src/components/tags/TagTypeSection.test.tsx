@@ -1,0 +1,220 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import RealTagTypeSection, { type TagPages, type TagTypeSectionProps } from './TagTypeSection'
+import type { Schema } from '../../api'
+import { tagDetailProps } from '../../test/fakeTagItems'
+
+// User-prefs persistence is exercised; keep it in-memory and simple.
+let prefs: Record<string, unknown> = {}
+vi.mock('../../hooks/useUserPrefs', () => ({
+  getUserPrefs: () => prefs,
+  saveUserPref: (key: string, value: unknown) => {
+    prefs[key] = value
+  },
+}))
+vi.mock('../../hooks/useViewMode', () => ({
+  getDefaultViewMode: () => 'card',
+}))
+
+beforeEach(() => {
+  prefs = {}
+})
+
+// A section takes its count and folders with counts now, and reads its items
+// from paged lists (issue #221). These tests describe a section by its items,
+// so this builds the paged form from them, fully loaded.
+interface Item {
+  item_id: string
+}
+
+interface FakeFolder {
+  resource_type: string
+  path: string
+  items: Item[]
+}
+
+type Props = Omit<TagTypeSectionProps<Item>, 'count' | 'folders' | 'pages' | 'onLoad'> & {
+  items?: Item[]
+  folders?: FakeFolder[]
+}
+
+function TagTypeSection({ type, items = [], folders = [], ...rest }: Props) {
+  const paged = tagDetailProps({ items: items.map((i) => ({ item_type: type, ...i })), folders })
+  return (
+    <RealTagTypeSection
+      type={type}
+      count={(paged.detail.counts as Record<string, number>)[type] || 0}
+      folders={paged.detail.folders as Schema<'TaggedFolder'>[]}
+      pages={paged.pages as TagPages<Item>}
+      onLoad={() => {}}
+      {...rest}
+    />
+  )
+}
+
+const renderItem = (item: Item) => (
+  <div key={item.item_id} data-testid="item">
+    {item.item_id}
+  </div>
+)
+
+describe('TagTypeSection', () => {
+  it('renders directly-tagged items under the section title', () => {
+    render(
+      <TagTypeSection
+        type="map"
+        title="Maps"
+        items={[{ item_id: 'm1' }]}
+        folders={[]}
+        renderItem={renderItem}
+      />
+    )
+    expect(screen.getByText('Maps')).toBeInTheDocument()
+    expect(screen.getByTestId('item')).toHaveTextContent('m1')
+  })
+
+  it('nests folder groups beneath the type, title-casing the folder path', () => {
+    render(
+      <TagTypeSection
+        type="map"
+        title="Maps"
+        items={[]}
+        folders={[{ resource_type: 'map', path: 'deep/woods', items: [{ item_id: 'mf1' }] }]}
+        renderItem={renderItem}
+      />
+    )
+    // Each path segment is Title-Cased and joined with " / ".
+    expect(screen.getByText('Deep / Woods')).toBeInTheDocument()
+    expect(screen.getByTestId('item')).toHaveTextContent('mf1')
+  })
+
+  it('collapses and expands, persisting the collapse state', async () => {
+    render(
+      <TagTypeSection
+        type="map"
+        title="Maps"
+        items={[{ item_id: 'm1' }]}
+        folders={[]}
+        renderItem={renderItem}
+      />
+    )
+    expect(screen.getByTestId('item')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /maps/i }))
+    expect(screen.queryByTestId('item')).not.toBeInTheDocument()
+    expect((prefs.tagsSectionCollapsed as Record<string, boolean>).map).toBe(true)
+  })
+})
+
+describe('TagTypeSection download (issue #401)', () => {
+  const props = {
+    type: 'map',
+    title: 'Maps',
+    items: [{ item_id: 'm1' }],
+    folders: [],
+    renderItem,
+    tag: 'spooky',
+  }
+
+  it('requests an archive scoped to this type', async () => {
+    const onDownload = vi.fn()
+    render(<TagTypeSection {...props} onDownload={onDownload} />)
+    await userEvent.click(screen.getByTitle('Download all Maps tagged spooky'))
+    expect(onDownload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { type: 'tag_type', tag: 'spooky', resource_type: 'map' },
+      })
+    )
+  })
+
+  it('does not collapse the section when the download button is clicked', async () => {
+    render(<TagTypeSection {...props} onDownload={vi.fn()} />)
+    await userEvent.click(screen.getByTitle('Download all Maps tagged spooky'))
+    expect(screen.getByTestId('item')).toBeInTheDocument()
+  })
+
+  it('offers a download when only a tagged folder holds items', () => {
+    render(
+      <TagTypeSection
+        {...props}
+        items={[]}
+        folders={[{ resource_type: 'map', path: 'woods', items: [{ item_id: 'mf1' }] }]}
+        onDownload={vi.fn()}
+      />
+    )
+    expect(screen.getByTitle('Download all Maps tagged spooky')).toBeInTheDocument()
+  })
+
+  it('offers no download when the section is empty', () => {
+    render(<TagTypeSection {...props} items={[]} folders={[]} onDownload={vi.fn()} />)
+    expect(screen.queryByTitle('Download all Maps tagged spooky')).not.toBeInTheDocument()
+  })
+
+  it('offers no download for a systems section', () => {
+    // A tagged system is a whole shelf, not a file; it is excluded from tag
+    // archives and downloaded from its own page instead.
+    render(
+      <TagTypeSection
+        {...props}
+        type="system"
+        title="Systems"
+        items={[{ item_id: 's1' }]}
+        onDownload={vi.fn()}
+      />
+    )
+    expect(screen.queryByTitle('Download all Systems tagged spooky')).not.toBeInTheDocument()
+  })
+
+  it('passes the tag down to its folder groups', async () => {
+    const onDownload = vi.fn()
+    render(
+      <TagTypeSection
+        {...props}
+        items={[]}
+        folders={[{ resource_type: 'map', path: 'woods', items: [{ item_id: 'mf1' }] }]}
+        onDownload={onDownload}
+      />
+    )
+    await userEvent.click(screen.getByTitle('Download Woods'))
+    expect(onDownload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ type: 'tag_folder', folder: 'woods' }),
+      })
+    )
+  })
+
+  it('follows defaultCollapsed until the user toggles it', async () => {
+    const props = { type: 'map', title: 'Maps', items: [{ item_id: 'm1' }], folders: [] }
+    const { rerender } = render(
+      <TagTypeSection {...props} renderItem={renderItem} defaultCollapsed />
+    )
+    expect(screen.queryByTestId('item')).not.toBeInTheDocument()
+    rerender(<TagTypeSection {...props} renderItem={renderItem} defaultCollapsed={false} />)
+    expect(screen.getByTestId('item')).toBeInTheDocument()
+
+    rerender(<TagTypeSection {...props} renderItem={renderItem} defaultCollapsed />)
+    await userEvent.click(screen.getByRole('button', { name: /Maps/ }))
+    expect(screen.getByTestId('item')).toBeInTheDocument()
+    expect(prefs.tagsSectionCollapsed).toEqual({ map: false })
+  })
+})
+
+describe('TagTypeSection folder defaults', () => {
+  it('starts many large tagged folders closed', () => {
+    const big = (path: string) => ({
+      resource_type: 'token',
+      path,
+      items: Array.from({ length: 20 }, (_, i) => ({ item_id: `${path}-${i}` })),
+    })
+    render(
+      <TagTypeSection
+        type="token"
+        title="Tokens"
+        items={[]}
+        folders={[big('a'), big('b')]}
+        renderItem={renderItem}
+      />
+    )
+    expect(screen.queryAllByTestId('item')).toHaveLength(0)
+  })
+})

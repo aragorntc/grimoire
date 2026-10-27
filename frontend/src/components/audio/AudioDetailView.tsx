@@ -1,0 +1,436 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
+import { LuArrowLeft, LuInfo, LuChevronDown, LuMusic, LuImagePlus } from 'react-icons/lu'
+import api, { imageSources, mediaUrl, type Schema } from '../../api'
+import useSiblingNavigation from '../../hooks/useSiblingNavigation'
+import useArrowKeyNavigation from '../../hooks/useArrowKeyNavigation'
+import ImagePickerModal from '../images/ImagePickerModal'
+import { useAuth } from '../../context/AuthContext'
+import Spinner from '../Spinner'
+import { formatSize, formatDuration } from '../../utils'
+import InlineTagEditor from '../maps/InlineTagEditor'
+import VariantPicker from '../VariantPicker'
+import DownloadVersionButton from '../DownloadVersionButton'
+import DetailMoreMenu from '../media/DetailMoreMenu'
+import MetaRow from '../MetaRow'
+import TagSection from '../TagSection'
+import AudioPlayer from './AudioPlayer'
+import AddToSoundboardButton from './AddToSoundboardButton'
+import ArchivePlaceholder from '../media/ArchivePlaceholder'
+import SiblingNavButtons from '../media/SiblingNavButtons'
+import SiblingPosition from '../media/SiblingPosition'
+import { isArchiveMedia } from '../../constants'
+import useIsMobile from '../../hooks/useIsMobile'
+
+type AudioDetail = Schema<'AudioDetailResponse'>
+
+export default function AudioDetailView() {
+  const { audioId } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+  // See MapDetailView: guests reach this view from a campaign resource row and
+  // have no /audio browse route to go back to (issue #361).
+  const backPathRef = useRef(location.state?.from ?? null)
+  // Going back is a *return* to the gallery, so it restores the filters the user
+  // had rather than re-applying their saved default over them.
+  const goBack = () => navigate(backPathRef.current || '/audio', { state: { restoreView: true } })
+  const { t } = useTranslation()
+  const isMobilePhone = useIsMobile(640)
+  const [track, setTrack] = useState<AudioDetail | null>(null)
+  const [editingTrackTags, setEditingTrackTags] = useState(false)
+  const [editingFolderTags, setEditingFolderTags] = useState(false)
+  const [showDetails, setShowDetails] = useState(false)
+  // Cover art set through the UI (issue #286) — gm/admin only, matching the
+  // rest of the library's edit affordances.
+  // `useAuth()` is null outside a provider, so read through it rather than
+  // destructuring — this view also renders in contexts without one.
+  const user = useAuth()?.user
+  const canEditCover = user?.role === 'admin' || user?.role === 'gm'
+  const [showCoverPicker, setShowCoverPicker] = useState(false)
+  // Cache-buster so a replaced cover isn't served from the browser cache.
+  const [coverVersion, setCoverVersion] = useState(0)
+
+  const audioDetailPath = useCallback((id: string) => `/audio/${id}`, [])
+  const {
+    siblings,
+    index: siblingIdx,
+    hasPrev,
+    hasNext,
+    onPrev,
+    onNext,
+  } = useSiblingNavigation({
+    item: track,
+    id: audioId,
+    listUrl: '/audio',
+    listKey: 'audio',
+    detailPath: audioDetailPath,
+    navigate,
+    get: api.get,
+  })
+  // There is no image to swipe or zoom here, so only the keyboard half of the
+  // map/token gesture handling applies.
+  useArrowKeyNavigation(onNext, onPrev)
+
+  useEffect(() => {
+    api.get(`/audio/${audioId}`).then((data) => setTrack(data as AudioDetail))
+  }, [audioId])
+
+  if (!track)
+    return (
+      <div style={{ padding: 40, textAlign: 'center' }}>
+        <Spinner size={32} />
+      </div>
+    )
+
+  const folder = (() => {
+    const parts = (track.relative_path || '').replace(/\\/g, '/').split('/')
+    const dirParts = parts.slice(1, -1)
+    return dirParts.length > 0 ? dirParts.join(' / ') : null
+  })()
+
+  const currentFolderTags = track.folder_tags ?? []
+  const isArchive = isArchiveMedia(track)
+
+  const saveTrackTags = async (tags: string[]) => {
+    await api.patch(`/audio/${audioId}`, { tags })
+    setTrack({ ...track, tags })
+    setEditingTrackTags(false)
+  }
+
+  const saveFolderTags = async (tags: string[]) => {
+    await api.patch('/audio-folders', { path: track.folder_path, tags })
+    setTrack({ ...track, folder_tags: tags })
+    setEditingFolderTags(false)
+  }
+
+  return (
+    <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Toolbar */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '10px 20px',
+          background: 'var(--bg-panel)',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0,
+          flexWrap: 'wrap',
+        }}
+      >
+        <button
+          onClick={goBack}
+          aria-label={t('audio.detail.back')}
+          style={{
+            background: 'none',
+            color: 'var(--text-dim)',
+            fontSize: 15,
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+          }}
+        >
+          <LuArrowLeft size={15} /> {!isMobilePhone && t('common.back')}
+        </button>
+        <div style={{ width: 1, height: 20, background: 'var(--border)' }} />
+        <span
+          style={{
+            fontSize: 16,
+            fontWeight: 500,
+            flex: 1,
+            minWidth: 0,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {track.title || track.filename}
+        </span>
+        <SiblingPosition
+          index={siblingIdx}
+          total={siblings.length}
+          label={t('audio.detail.position', {
+            current: siblingIdx + 1,
+            total: siblings.length,
+          })}
+        />
+        {isMobilePhone && (
+          <button
+            onClick={() => setShowDetails((v) => !v)}
+            title={t('audio.detail.details')}
+            style={{
+              background: showDetails ? 'var(--bg-card-hover)' : 'var(--bg-card)',
+              border: '1px solid var(--border)',
+              color: showDetails ? 'var(--gold)' : 'var(--text-dim)',
+              borderRadius: 4,
+              padding: '4px 10px',
+              fontSize: 14,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              cursor: 'pointer',
+            }}
+          >
+            <LuInfo size={13} />
+            <LuChevronDown
+              size={11}
+              style={{
+                transform: showDetails ? 'rotate(180deg)' : 'none',
+                transition: 'transform 0.2s',
+              }}
+            />
+          </button>
+        )}
+        <VariantPicker
+          item={track}
+          detailPath={(id: string) => `/audio/${id}`}
+          resourceType="audio"
+          compact
+        />
+        <DownloadVersionButton type="audio" id={audioId!} item={track} compact={isMobilePhone} />
+        {/* Favourite, campaigns and share links live in the overflow menu, as in
+            the book reader, so the toolbar keeps room for the title. */}
+        <DetailMoreMenu
+          resourceType="audio"
+          resourceId={audioId!}
+          title={track.title || track.filename}
+        />
+      </div>
+
+      {/* Body */}
+      <div
+        style={{
+          flex: 1,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: isMobilePhone ? 'column' : 'row',
+        }}
+      >
+        {/* Player / archive pane */}
+        {isArchive ? (
+          <ArchivePlaceholder fileUrl={`/audio/${audioId}/file`} filename={track.filename} />
+        ) : (
+          <div
+            style={{
+              flex: 1,
+              overflow: 'auto',
+              background: 'var(--bg-deep)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 24,
+              padding: 24,
+              // Anchors the overlay prev/next arrows.
+              position: 'relative',
+            }}
+          >
+            <SiblingNavButtons
+              hasPrev={hasPrev}
+              hasNext={hasNext}
+              onPrev={onPrev}
+              onNext={onNext}
+              prevLabel={t('audio.detail.previous')}
+              nextLabel={t('audio.detail.next')}
+            />
+            <div
+              style={{
+                width: 'min(360px, 70vw)',
+                aspectRatio: '1/1',
+                borderRadius: 8,
+                overflow: 'hidden',
+                background: 'var(--bg-card)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 24px var(--overlay)',
+              }}
+            >
+              {track.has_artwork ? (
+                <img
+                  src={mediaUrl(
+                    `/audio/${audioId}/artwork`,
+                    coverVersion ? { v: coverVersion } : {}
+                  )}
+                  alt=""
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                <LuMusic size={72} color="var(--text-muted)" style={{ opacity: 0.4 }} />
+              )}
+            </div>
+            {canEditCover && (
+              <button
+                type="button"
+                onClick={() => setShowCoverPicker(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  background: 'none',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text-dim)',
+                  fontSize: 13,
+                  cursor: 'pointer',
+                }}
+              >
+                <LuImagePlus size={13} />{' '}
+                {track.has_artwork ? t('audio.detail.changeCover') : t('audio.detail.setCover')}
+              </button>
+            )}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <AudioPlayer
+                track={{
+                  id: audioId!,
+                  title: track.title || track.filename,
+                  artwork: track.has_artwork,
+                }}
+                showPlayNext
+                size={56}
+              />
+              <AddToSoundboardButton
+                track={{ id: audioId!, title: track.title || track.filename }}
+                size={36}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Metadata sidebar */}
+        <div
+          style={{
+            ...(isMobilePhone
+              ? {
+                  display: showDetails ? 'block' : 'none',
+                  width: '100%',
+                  borderTop: '1px solid var(--border)',
+                  maxHeight: '50vh',
+                }
+              : { width: 280, flexShrink: 0, borderLeft: '1px solid var(--border)' }),
+            background: 'var(--bg-panel)',
+            padding: '24px 20px',
+            overflowY: 'auto',
+          }}
+        >
+          <h3 style={{ fontSize: 15, marginBottom: 20 }}>{t('audio.detail.title')}</h3>
+
+          {folder && <MetaRow label={t('audio.detail.location')} value={folder} />}
+          {track.title && <MetaRow label={t('audio.detail.trackTitle')} value={track.title} />}
+          {track.artist && <MetaRow label={t('audio.detail.artist')} value={track.artist} />}
+          {track.album && <MetaRow label={t('audio.detail.album')} value={track.album} />}
+          {track.duration > 0 && (
+            <MetaRow label={t('audio.detail.duration')} value={formatDuration(track.duration)} />
+          )}
+          <MetaRow label={t('audio.detail.fileSize')} value={formatSize(track.file_size!)} />
+
+          {/* Folder tags */}
+          {folder &&
+            (editingFolderTags ? (
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: 'var(--text-muted)',
+                    marginBottom: 10,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  {t('audio.detail.folderTags')}
+                </div>
+                <InlineTagEditor
+                  tags={currentFolderTags}
+                  onSave={saveFolderTags}
+                  onCancel={() => setEditingFolderTags(false)}
+                  resourceType="audio"
+                />
+              </div>
+            ) : (
+              <TagSection
+                label={t('audio.detail.folderTags')}
+                tags={currentFolderTags}
+                canEdit={true}
+                onEdit={() => setEditingFolderTags(true)}
+                editLabel={t('audio.detail.editTags')}
+                noTagsLabel={t('audio.detail.noTags')}
+              />
+            ))}
+
+          {/* Track tags */}
+          {editingTrackTags ? (
+            <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  marginBottom: 10,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                }}
+              >
+                {t('audio.detail.trackTags')}
+              </div>
+              <InlineTagEditor
+                tags={track.tags}
+                onSave={saveTrackTags}
+                onCancel={() => setEditingTrackTags(false)}
+                resourceType="audio"
+              />
+            </div>
+          ) : (
+            <TagSection
+              label={t('audio.detail.trackTags')}
+              tags={track.tags}
+              canEdit
+              onEdit={() => setEditingTrackTags(true)}
+              editLabel={t('audio.detail.editTags')}
+              noTagsLabel={t('audio.detail.noTags')}
+            />
+          )}
+        </div>
+      </div>
+
+      {showCoverPicker && (
+        <ImagePickerModal
+          title={t('audio.detail.coverTitle')}
+          hasImage={Boolean(track.has_cover)}
+          previewSrc={
+            track.has_artwork
+              ? mediaUrl(`/audio/${audioId}/artwork`, coverVersion ? { v: coverVersion } : {})
+              : null
+          }
+          aspectRatio="1 / 1"
+          formatsText={t('imagePicker.formats')}
+          onUpload={async (file: Blob) => {
+            await imageSources.uploadAudioCover(audioId!, file)
+            setTrack((await api.get(`/audio/${audioId}`)) as AudioDetail)
+            setCoverVersion((v) => v + 1)
+          }}
+          onPickSource={async ({
+            source_type: type,
+            source_id: id,
+          }: Schema<'AudioCoverSourceIn'>) => {
+            await imageSources.setAudioCover(audioId!, type, id)
+            setTrack((await api.get(`/audio/${audioId}`)) as AudioDetail)
+            setCoverVersion((v) => v + 1)
+          }}
+          onRemove={
+            track.has_cover
+              ? async () => {
+                  await imageSources.deleteAudioCover(audioId!)
+                  setTrack((await api.get(`/audio/${audioId}`)) as AudioDetail)
+                  setCoverVersion((v) => v + 1)
+                }
+              : undefined
+          }
+          onClose={() => setShowCoverPicker(false)}
+        />
+      )}
+    </div>
+  )
+}

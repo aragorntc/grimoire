@@ -1,0 +1,423 @@
+import { describe, it, expect, vi } from 'vitest'
+import { render as rtlRender, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
+import userEvent from '@testing-library/user-event'
+import MediaCard from './MediaCard'
+import type { ReactElement } from 'react'
+import { MEDIA_CONFIGS } from './mediaConfig'
+import type { MediaItem, MediaType } from './mediaConfig'
+
+vi.mock('../../api', () => ({ mediaUrl: (p: string) => `http://localhost${p}` }))
+vi.mock('../FavoriteButton', () => ({ default: () => <span data-testid="fav" /> }))
+vi.mock('../DownloadButton', () => ({ default: () => <span data-testid="dl" /> }))
+// AudioPlayer controller stub: renders a button when given a track.
+vi.mock('../audio/AudioPlayer', () => ({
+  default: ({ track, showPlayNext }: { track?: { id: string }; showPlayNext?: boolean }) => (
+    <span data-testid="audio-player">
+      {track?.id}
+      {showPlayNext ? ':next' : ''}
+    </span>
+  ),
+}))
+
+// MediaCard renders CardLink (<Link>) in non-bulk mode, so a Router is required.
+const render = (ui: ReactElement) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>)
+let currentId: string | null = null
+let playingId: string | null = null
+vi.mock('../../context/AudioPlayerContext', () => ({
+  useAudioPlayer: () => ({
+    isCurrent: (id: string) => id === currentId,
+    isPlayingId: (id: string) => id === playingId,
+  }),
+}))
+
+const audioItem = (over: Partial<MediaItem> = {}) =>
+  ({
+    id: 'a1',
+    filename: 'tavern.mp3',
+    title: 'Tavern Night',
+    relative_path: 'audio/Ambient/tavern.mp3',
+    has_artwork: false,
+    is_missing: false,
+    file_size: 1000,
+    tags: [],
+    ...over,
+  }) as MediaItem
+
+const mapItem = (over: Partial<MediaItem> = {}) =>
+  ({
+    id: 'm1',
+    filename: 'cave.png',
+    relative_path: 'maps/cave.png',
+    has_thumbnail: false,
+    is_missing: false,
+    file_size: 1000,
+    tags: [],
+    ...over,
+  }) as MediaItem
+
+describe('MediaCard — audio', () => {
+  it('renders an audio player in grid mode', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.audio} item={audioItem()} />)
+    expect(screen.getByTestId('audio-player')).toHaveTextContent('a1')
+    expect(screen.getByText('Tavern Night')).toBeInTheDocument()
+  })
+
+  it('labels a list row by track number and title, with tag details beneath', () => {
+    // Issue #494: the tags, not the filename, name the row.
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.audio}
+        item={audioItem({
+          title: 'Die Sümpfe Harodiens',
+          track_number: 3,
+          artist: 'Sphärenklang',
+          album: 'Thorwal',
+          duration: 125,
+        })}
+        list
+      />
+    )
+    expect(screen.getByText('03 · Die Sümpfe Harodiens')).toBeInTheDocument()
+    expect(screen.getByText('Sphärenklang · Thorwal · 2:05')).toBeInTheDocument()
+    expect(screen.queryByText('tavern.mp3')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '03 · Die Sümpfe Harodiens' })).toBeInTheDocument()
+  })
+
+  it('falls back to the filename and size for an untagged track', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.audio} item={audioItem({ title: '' })} list />)
+    expect(screen.getByText('tavern')).toBeInTheDocument()
+    expect(screen.getByText('1000 B')).toBeInTheDocument()
+  })
+
+  it('renders an audio player with Play Next in list mode', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.audio} item={audioItem()} list />)
+    expect(screen.getByTestId('audio-player')).toHaveTextContent('a1:next')
+  })
+
+  it('hides the player for a missing audio file', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.audio} item={audioItem({ is_missing: true })} />)
+    expect(screen.queryByTestId('audio-player')).not.toBeInTheDocument()
+  })
+
+  it('hides the player for an audio archive', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.audio}
+        item={audioItem({ filename: 'ambience.zip', is_archive: true })}
+      />
+    )
+    expect(screen.queryByTestId('audio-player')).not.toBeInTheDocument()
+  })
+
+  it('shows artwork when has_artwork is set', () => {
+    const { container } = render(
+      <MediaCard config={MEDIA_CONFIGS.audio} item={audioItem({ has_artwork: true })} />
+    )
+    const img = container.querySelector('img')
+    expect(img?.getAttribute('src')).toContain('/audio/a1/artwork')
+  })
+
+  it('renders a real link to the audio detail page', () => {
+    // Non-bulk: CardLink renders an <a> overlay labelled like the card - the
+    // track's title here. Middle/ctrl-click open a new tab natively (no JS needed).
+    render(<MediaCard config={MEDIA_CONFIGS.audio} item={audioItem()} />)
+    const link = screen.getByRole('link', { name: 'Tavern Night' })
+    expect(link).toHaveAttribute('href', '/audio/a1')
+  })
+})
+
+describe('MediaCard — map (no audio controls)', () => {
+  it('renders no audio player for a map', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem()} />)
+    expect(screen.queryByTestId('audio-player')).not.toBeInTheDocument()
+  })
+
+  it('renders a real link to the map detail page', () => {
+    // Non-bulk: CardLink overlay with aria-label = item.filename.
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem()} />)
+    const link = screen.getByRole('link', { name: 'cave.png' })
+    expect(link).toHaveAttribute('href', '/maps/m1')
+  })
+
+  it('toggles selection in bulk mode instead of linking', async () => {
+    const onToggle = vi.fn()
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem()}
+        bulkMode
+        selected={false}
+        onToggle={onToggle}
+      />
+    )
+    await userEvent.click(screen.getByText('cave.png'))
+    expect(onToggle).toHaveBeenCalled()
+    // No CardLink in bulk mode.
+    expect(screen.queryByRole('link', { name: 'cave.png' })).not.toBeInTheDocument()
+  })
+
+  it('renders in list mode with a thumbnail', () => {
+    const { container } = render(
+      <MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ has_thumbnail: true })} list />
+    )
+    expect(container.querySelector('img')?.getAttribute('src')).toContain('/maps/m1/thumbnail')
+  })
+
+  // Animated maps carry no thumbnail (no video decoder is shipped), so the
+  // placeholder should say "video" rather than showing the generic map pin.
+  it('uses a video placeholder icon for an animated map with no thumbnail', () => {
+    const { container } = render(
+      <MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ filename: 'storm.webm' })} />
+    )
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByTestId('video-placeholder')).toBeInTheDocument()
+  })
+
+  it('keeps the map placeholder icon for a still map with no thumbnail', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem()} />)
+    expect(screen.getByTestId('media-placeholder')).toBeInTheDocument()
+    expect(screen.queryByTestId('video-placeholder')).toBeNull()
+  })
+
+  it('prefers a real thumbnail over the video placeholder', () => {
+    const { container } = render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ filename: 'storm.webm', has_thumbnail: true })}
+      />
+    )
+    expect(container.querySelector('img')).toBeInTheDocument()
+    expect(screen.queryByTestId('video-placeholder')).toBeNull()
+  })
+
+  it('shows the missing badge for a missing item', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ is_missing: true })} />)
+    expect(screen.getByText(/missing/i)).toBeInTheDocument()
+  })
+
+  it('shows the archive badge for an archive item', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ filename: 'pack.zip', is_archive: true })}
+      />
+    )
+    expect(screen.getByText(/archive/i)).toBeInTheDocument()
+  })
+
+  it('hides the top-left archive badge in bulk mode (checkbox takes the corner)', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ filename: 'pack.zip', is_archive: true })}
+        bulkMode
+        selected={false}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.queryByText(/archive/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the versions badge in the footer, not over the thumbnail', () => {
+    const { container } = render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ variant_count: 1, variant_kinds: ['universal-vtt'] })}
+      />
+    )
+    const badge = screen.getByRole('img', { name: 'Universal VTT' })
+    // The old badge was absolutely positioned inside the thumbnail box, which
+    // (with no offsets for its corner) parked it over the middle of the art.
+    expect(badge.closest('[style*="position: absolute"]')).toBeNull()
+    // It sits in the same row as the file size.
+    expect(badge.closest('div')).toHaveTextContent('1000 B')
+    expect(container.textContent).not.toMatch(/^Versions$/)
+  })
+
+  it('right-aligns the version icons in the card footer', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ variant_count: 1, variant_kinds: ['universal-vtt'] })}
+      />
+    )
+    // The size takes the leftover space, which parks the icons on the right edge
+    // so they line up down a column of cards.
+    expect(screen.getByText('1000 B')).toHaveStyle({ marginRight: 'auto' })
+  })
+
+  it('shows the versions badge in list mode', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ variant_count: 1, variant_kinds: ['video'] })}
+        list
+      />
+    )
+    expect(screen.getByRole('img', { name: 'Video' })).toBeInTheDocument()
+  })
+
+  it('shows no versions badge for an item with no other versions', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ variant_count: 0 })} />)
+    expect(screen.queryByRole('img', { name: /version/i })).toBeNull()
+  })
+
+  it('keeps the versions badge visible in bulk mode (it is not a corner badge)', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ variant_count: 1, variant_kinds: ['universal-vtt'] })}
+        bulkMode
+        selected={false}
+        onToggle={vi.fn()}
+      />
+    )
+    expect(screen.getByRole('img', { name: 'Universal VTT' })).toBeInTheDocument()
+  })
+
+  it('shows the archive badge inline in list mode', () => {
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem({ filename: 'pack.zip', is_archive: true })}
+        list
+      />
+    )
+    expect(screen.getByText(/archive/i)).toBeInTheDocument()
+  })
+
+  it('toggles on Enter key in bulk mode', async () => {
+    const onToggle = vi.fn()
+    render(
+      <MediaCard
+        config={MEDIA_CONFIGS.map}
+        item={mapItem()}
+        bulkMode
+        selected={false}
+        onToggle={onToggle}
+      />
+    )
+    // In bulk mode the card renders role=button.
+    screen.getByRole('button', { name: 'cave.png' }).focus()
+    await userEvent.keyboard('{Enter}')
+    expect(onToggle).toHaveBeenCalled()
+  })
+
+  // Issue #313 — cards are now real <a> anchors, so the browser handles new-tab
+  // natively. Tests verify the correct href; no window.open assertions needed.
+  describe('real link card (issue #313)', () => {
+    it.each([
+      ['map', 'map', mapItem, 'cave.png', '/maps/m1'],
+      ['audio', 'audio', audioItem, 'Tavern Night', '/audio/a1'],
+    ])(
+      'non-bulk %s card has the right href for native new-tab support',
+      (_label, key, makeItem, name, href) => {
+        render(<MediaCard config={MEDIA_CONFIGS[key as MediaType]} item={makeItem()} />)
+        const link = screen.getByRole('link', { name })
+        expect(link).toHaveAttribute('href', href)
+      }
+    )
+
+    it('list-layout map card has the right href', () => {
+      render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem()} list />)
+      const link = screen.getByRole('link', { name: 'cave.png' })
+      expect(link).toHaveAttribute('href', '/maps/m1')
+    })
+
+    it('bulk mode renders a button, not a link', () => {
+      const onToggle = vi.fn()
+      render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem()} bulkMode onToggle={onToggle} />)
+      expect(screen.getByRole('button', { name: 'cave.png' })).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: 'cave.png' })).not.toBeInTheDocument()
+    })
+  })
+})
+
+describe('MediaCard — now playing (audio list rows)', () => {
+  beforeEach(() => {
+    currentId = null
+    playingId = null
+  })
+
+  const renderRow = (over?: Partial<MediaItem>) =>
+    render(<MediaCard config={MEDIA_CONFIGS.audio} item={audioItem(over)} list />)
+
+  // Outside bulk mode the row is a plain container holding a stretched <a>, so
+  // the now-playing state sits on the link's parent rather than on a button.
+  const row = () => screen.getByRole('link', { name: 'Tavern Night' }).parentElement!
+
+  it('leaves an unrelated row unmarked', () => {
+    currentId = 'other'
+    playingId = 'other'
+    renderRow()
+    expect(row()).not.toHaveAttribute('aria-current')
+    expect(screen.queryByText('Now playing')).not.toBeInTheDocument()
+  })
+
+  it('marks the active row with aria-current and an accent bar', () => {
+    currentId = 'a1'
+    playingId = 'a1'
+    renderRow()
+    expect(row()).toHaveAttribute('aria-current', 'true')
+    expect(row().style.borderLeft).toBe('3px solid var(--gold)')
+  })
+
+  it('states the playing status as text, not colour alone', () => {
+    currentId = 'a1'
+    playingId = 'a1'
+    renderRow()
+    expect(screen.getByText('Now playing')).toBeInTheDocument()
+  })
+
+  it('keeps a current-but-paused row marked but reports it as paused', () => {
+    currentId = 'a1'
+    playingId = null
+    renderRow()
+    expect(row()).toHaveAttribute('aria-current', 'true')
+    expect(screen.getByText('Current track, paused')).toBeInTheDocument()
+    expect(screen.queryByText('Now playing')).not.toBeInTheDocument()
+  })
+
+  it('does not mark non-audio rows that share an id with the current track', () => {
+    currentId = 'm1'
+    playingId = 'm1'
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem()} list />)
+    expect(screen.getByRole('link', { name: 'cave.png' }).parentElement).not.toHaveAttribute(
+      'aria-current'
+    )
+  })
+
+  it('does not mark an audio archive row', () => {
+    currentId = 'a1'
+    playingId = 'a1'
+    renderRow({ is_archive: true })
+    // An archive is labelled by its whole filename rather than a tag title.
+    const archiveRow = screen.getByRole('link', { name: 'tavern.mp3' }).parentElement
+    expect(archiveRow).not.toHaveAttribute('aria-current')
+  })
+})
+
+describe('MediaCard — new badge (issue #199)', () => {
+  const yesterday = () => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+  it('marks a recently added item in grid mode, reading "New" on hover', () => {
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ added_at: yesterday() })} />)
+    expect(screen.getByTestId('recently-added-badge')).toHaveAttribute('title', 'New')
+  })
+
+  it('marks a recently added item in list mode', () => {
+    render(
+      <MediaCard config={MEDIA_CONFIGS.audio} item={audioItem({ added_at: yesterday() })} list />
+    )
+    expect(screen.getByRole('img', { name: 'New' })).toBeInTheDocument()
+  })
+
+  it('shows no badge for an item added long ago or never dated', () => {
+    render(
+      <MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ added_at: '2020-01-01T00:00:00Z' })} />
+    )
+    render(<MediaCard config={MEDIA_CONFIGS.map} item={mapItem({ id: 'm2', added_at: null })} />)
+    expect(screen.queryByTestId('recently-added-badge')).not.toBeInTheDocument()
+  })
+})

@@ -1,0 +1,288 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { Mock } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import MemberRow, { type MemberRowProps } from './MemberRow'
+import InvitePanel from './InvitePanel'
+
+// MemberRow's avatar navigates to the token editor, so it needs a router.
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => vi.fn(),
+}))
+
+vi.mock('../../api', () => ({
+  campaigns: {
+    eligibleMembers: vi.fn(),
+    invite: vi.fn(),
+    memberSheetUrl: vi.fn(() => '/api/sheet'),
+    listSheetSources: vi.fn(),
+    duplicateMemberSheet: vi.fn(),
+  },
+}))
+
+import { campaigns } from '../../api'
+
+// The api module is mocked above; reach its helpers as plain vi.fn()s.
+const campaignsMock = campaigns as unknown as Record<keyof typeof campaigns, Mock>
+
+const baseMember = {
+  user_id: 'u1',
+  username: 'alice',
+  display_name: null,
+  character_name: null,
+  status: 'accepted',
+}
+
+function renderRow(overrides = {}, props: Partial<MemberRowProps> = {}) {
+  const member = { ...baseMember, ...overrides }
+  return render(
+    <MemberRow
+      member={member}
+      isOwner={false}
+      canManage={false}
+      currentUserId="other"
+      onRemove={vi.fn()}
+      onUpdateStatus={vi.fn()}
+      onSetCharacterName={vi.fn()}
+      // Most rows render without a campaign, which hides the media actions.
+      campaignId={undefined as unknown as string}
+      {...props}
+    />
+  )
+}
+
+describe('MemberRow', () => {
+  it('shows username when display_name is null', () => {
+    renderRow({ display_name: null, username: 'alice' })
+    expect(screen.getByText('alice')).toBeTruthy()
+  })
+
+  it('shows display_name when set', () => {
+    renderRow({ display_name: 'Alice Smith', username: 'alice' })
+    expect(screen.getByText('Alice Smith')).toBeTruthy()
+    expect(screen.queryByText('alice')).toBeNull()
+  })
+
+  it('shows "(you)" label for the current user', () => {
+    renderRow({}, { currentUserId: 'u1' })
+    expect(screen.getByText(/\(you\)/)).toBeTruthy()
+  })
+
+  it('does not show "(you)" for other users', () => {
+    renderRow({}, { currentUserId: 'u2' })
+    expect(screen.queryByText(/\(you\)/)).toBeNull()
+  })
+
+  it('shows member status badge', () => {
+    renderRow({ status: 'invited' })
+    expect(screen.getByText('invited')).toBeTruthy()
+  })
+
+  it('shows a Guest badge for guest members', () => {
+    renderRow({ is_guest: true, display_name: 'Wanderer' })
+    expect(screen.getByText('Guest')).toBeTruthy()
+  })
+
+  it('does not show a Guest badge for normal members', () => {
+    renderRow({ is_guest: false })
+    expect(screen.queryByText('Guest')).toBeNull()
+  })
+
+  it('shows accept/decline buttons for current user with invited status', () => {
+    renderRow({ status: 'invited' }, { currentUserId: 'u1' })
+    expect(screen.getByRole('button', { name: 'Accept' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Decline' })).toBeTruthy()
+  })
+
+  it('does not show accept/decline for another user with invited status', () => {
+    renderRow({ status: 'invited' }, { currentUserId: 'u2' })
+    expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull()
+  })
+
+  it('calls onUpdateStatus with accepted when Accept is clicked', () => {
+    const onUpdateStatus = vi.fn()
+    renderRow({ status: 'invited' }, { currentUserId: 'u1', onUpdateStatus })
+    fireEvent.click(screen.getByRole('button', { name: 'Accept' }))
+    expect(onUpdateStatus).toHaveBeenCalledWith('u1', 'accepted')
+  })
+
+  it('calls onUpdateStatus with declined when Decline is clicked', () => {
+    const onUpdateStatus = vi.fn()
+    renderRow({ status: 'invited' }, { currentUserId: 'u1', onUpdateStatus })
+    fireEvent.click(screen.getByRole('button', { name: 'Decline' }))
+    expect(onUpdateStatus).toHaveBeenCalledWith('u1', 'declined')
+  })
+
+  it('shows remove button for non-self members when canManage is true', () => {
+    renderRow({}, { canManage: true, currentUserId: 'other' })
+    expect(screen.getByRole('button', { name: /Remove alice/ })).toBeTruthy()
+  })
+
+  it('does not show remove button for self even when canManage is true', () => {
+    renderRow({}, { canManage: true, currentUserId: 'u1' })
+    expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull()
+  })
+
+  it('calls onRemove when Remove is clicked', () => {
+    const onRemove = vi.fn()
+    renderRow({}, { canManage: true, currentUserId: 'other', onRemove })
+    fireEvent.click(screen.getByRole('button', { name: /Remove alice/ }))
+    expect(onRemove).toHaveBeenCalledWith('u1')
+  })
+
+  it('shows character name when set', () => {
+    renderRow({ character_name: 'Elara the Bold' })
+    expect(screen.getByText('Elara the Bold')).toBeTruthy()
+  })
+
+  it('shows "No character name" placeholder when unset', () => {
+    renderRow({ character_name: null })
+    expect(screen.getByText('No character name')).toBeTruthy()
+  })
+
+  it('flags a member whose campaign access is disabled', () => {
+    renderRow({ campaign_access: false })
+    expect(screen.getByText('Access disabled')).toBeTruthy()
+  })
+
+  it('does not flag a member with campaign access enabled', () => {
+    renderRow({ campaign_access: true })
+    expect(screen.queryByText('Access disabled')).toBeNull()
+  })
+
+  it('warns before replacing an existing sheet, offering Cancel/Download/Replace', () => {
+    renderRow(
+      { id: 'mem1', has_sheet: true, character_sheet_filename: 'hero.pdf' },
+      { currentUserId: 'u1', campaignId: 'c1' }
+    )
+    // The replace (upload) action is shown for the editable member with a sheet.
+    fireEvent.click(screen.getByLabelText('Replace sheet'))
+    // The warning dialog appears with all three choices.
+    expect(screen.getByText(/replaces the current one/i)).toBeTruthy()
+    expect(screen.getByText('Download current')).toBeTruthy()
+    expect(screen.getByText('Replace')).toBeTruthy()
+    expect(screen.getByText('Cancel')).toBeTruthy()
+  })
+})
+
+describe('InvitePanel', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('shows users available to invite', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue([
+      { id: 'u2', username: 'bob', display_name: null, role: 'player', already_invited: false },
+    ])
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('bob')).toBeTruthy())
+    expect(screen.getByText('Invite')).toBeTruthy()
+  })
+
+  it('shows message when all users are already invited', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue([
+      { id: 'u2', username: 'bob', display_name: null, role: 'player', already_invited: true },
+    ])
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() =>
+      expect(screen.getByText('All users have already been invited.')).toBeTruthy()
+    )
+  })
+
+  it('calls invite and onInvited when Invite button is clicked', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue([
+      { id: 'u2', username: 'bob', display_name: null, role: 'player', already_invited: false },
+    ])
+    campaignsMock.invite.mockResolvedValue({})
+    const onInvited = vi.fn()
+    render(<InvitePanel campaignId="c1" onInvited={onInvited} />)
+    await waitFor(() => screen.getByText('bob'))
+    fireEvent.click(screen.getByText('Invite'))
+    await waitFor(() => expect(campaigns.invite).toHaveBeenCalledWith('c1', 'u2'))
+    expect(onInvited).toHaveBeenCalled()
+  })
+
+  it('hides the search box for a short list', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue([
+      { id: 'u2', username: 'bob', display_name: null, role: 'player', already_invited: false },
+    ])
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() => screen.getByText('bob'))
+    expect(screen.queryByPlaceholderText('Search users…')).toBeNull()
+  })
+
+  it('filters the list by the search query once the list is long', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue(
+      ['bob', 'carol', 'dave', 'erin', 'frank', 'grace'].map((n, i) => ({
+        id: `u${i}`,
+        username: n,
+        display_name: null,
+        role: 'player',
+        already_invited: false,
+      }))
+    )
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() => screen.getByText('bob'))
+
+    const search = screen.getByPlaceholderText('Search users…')
+    fireEvent.change(search, { target: { value: 'gra' } })
+
+    expect(screen.getByText('grace')).toBeTruthy()
+    expect(screen.queryByText('bob')).toBeNull()
+  })
+
+  it('shows an empty-state when the search matches nobody', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue(
+      ['bob', 'carol', 'dave', 'erin', 'frank', 'grace'].map((n, i) => ({
+        id: `u${i}`,
+        username: n,
+        display_name: null,
+        role: 'player',
+        already_invited: false,
+      }))
+    )
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() => screen.getByText('bob'))
+
+    fireEvent.change(screen.getByPlaceholderText('Search users…'), {
+      target: { value: 'zzz' },
+    })
+    expect(screen.getByText('No matching users.')).toBeTruthy()
+  })
+
+  it('matches on display name as well as username', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue(
+      [
+        { username: 'bob', display_name: 'Robert Tables' },
+        { username: 'carol', display_name: null },
+        { username: 'dave', display_name: null },
+        { username: 'erin', display_name: null },
+        { username: 'frank', display_name: null },
+        { username: 'grace', display_name: null },
+      ].map((u, i) => ({ ...u, id: `u${i}`, role: 'player', already_invited: false }))
+    )
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() => screen.getByText('Robert Tables'))
+
+    fireEvent.change(screen.getByPlaceholderText('Search users…'), {
+      target: { value: 'tables' },
+    })
+    expect(screen.getByText('Robert Tables')).toBeTruthy()
+    expect(screen.queryByText('carol')).toBeNull()
+  })
+
+  it('disables the invite button for users whose campaign access is off', async () => {
+    campaignsMock.eligibleMembers.mockResolvedValue([
+      {
+        id: 'u3',
+        username: 'carol',
+        display_name: null,
+        role: 'player',
+        already_invited: false,
+        campaign_access: false,
+      },
+    ])
+    render(<InvitePanel campaignId="c1" onInvited={vi.fn()} />)
+    await waitFor(() => screen.getByText('carol'))
+    expect(screen.getByText('Invite').closest('button')).toBeDisabled()
+  })
+})

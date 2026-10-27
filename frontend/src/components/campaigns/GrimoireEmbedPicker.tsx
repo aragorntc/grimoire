@@ -1,0 +1,376 @@
+import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  LuX,
+  LuSearch,
+  LuBookOpen,
+  LuMap,
+  LuUser,
+  LuMusic,
+  LuFile,
+  LuImage,
+  LuPlus,
+} from 'react-icons/lu'
+import type { IconType } from 'react-icons'
+import { campaigns, mediaUrl, type Schema } from '../../api'
+import Spinner from '../Spinner'
+import ImageUploadPanel from './ImageUploadPanel'
+import SegmentControl from './SegmentControl'
+import { miniBtn, miniBtnGhost } from './embedPickerStyles'
+import { buildEmbedGroups } from './embedPickerGroups'
+import LazyImg from '../LazyImg'
+
+type Resource = Schema<'LinkedResourceOut'>
+
+const TYPE_ICON: Record<string, IconType | undefined> = {
+  book: LuBookOpen,
+  map: LuMap,
+  token: LuUser,
+  audio: LuMusic,
+  file: LuFile,
+}
+
+// Picks a linked campaign resource (or uploads a new image) and returns the
+// [[...]] embed token to insert into a wiki note. Only resources already linked
+// to this campaign are listed — to embed new library content, link it first in
+// the Resources panel.
+interface GrimoireEmbedPickerProps {
+  campaignId: string
+  groupOrder?: string[] | null
+  onInsert: (token: string) => void
+  onClose: () => void
+}
+
+export default function GrimoireEmbedPicker({
+  campaignId,
+  groupOrder,
+  onInsert,
+  onClose,
+}: GrimoireEmbedPickerProps) {
+  const { t } = useTranslation()
+  const [query, setQuery] = useState('')
+  const [resources, setResources] = useState<Resource[] | null>(null)
+  const [categories, setCategories] = useState<Schema<'CampaignCategoryOut'>[]>([])
+  const [activeGroup, setActiveGroup] = useState<string | null>(null) // null until groups load
+  const [pageFor, setPageFor] = useState<string | null>(null) // book item awaiting a page number
+  const [pageNum, setPageNum] = useState('')
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const pageInputRef = useRef<HTMLInputElement>(null)
+
+  // Clicking "at page" reveals the page input — focus it so the number can be
+  // typed right away instead of requiring a second click.
+  useEffect(() => {
+    if (pageFor !== null) pageInputRef.current?.focus()
+  }, [pageFor])
+
+  useEffect(() => {
+    campaigns
+      .listResources(campaignId)
+      .then((list) => setResources(list || []))
+      .catch(() => setResources([]))
+    // Categories only affect how rows are grouped, so a failure here degrades
+    // to the built-in type tabs rather than blocking the picker.
+    campaigns
+      .listCategories(campaignId, 'resource')
+      .then((list) => setCategories(list || []))
+      .catch(() => setCategories([]))
+  }, [campaignId])
+
+  // The embed token for a resource. Images use the `image:` prefix so they render
+  // inline; other files use `file:`; books optionally carry a page number.
+  const tokenFor = (item: Resource, page: string | null) => {
+    if (item.resource_type === 'file') {
+      return item.is_image ? `[[image:${item.resource_id}]]` : `[[file:${item.resource_id}]]`
+    }
+    if (item.resource_type === 'book' && page) {
+      return `[[book:${item.resource_id}:${page}]]`
+    }
+    return `[[${item.resource_type}:${item.resource_id}]]`
+  }
+
+  const insert = (item: Resource, page: string | null) => onInsert(tokenFor(item, page))
+
+  const handleUploaded = (created: { resource_id: string }) => {
+    setUploadOpen(false)
+    // The new image is a linked resource; embed it immediately.
+    onInsert(`[[image:${created.resource_id}]]`)
+  }
+
+  const TYPE_LABELS: Record<string, string> = {
+    book: t('resources.books'),
+    map: t('resources.maps'),
+    token: t('resources.tokens'),
+    audio: t('resources.audio'),
+    file: t('resources.files'),
+  }
+
+  const search = query.trim().toLowerCase()
+  const matchesQuery = (r: Resource) => (r.name || '').toLowerCase().includes(search)
+
+  const groups = buildEmbedGroups(
+    resources || [],
+    categories,
+    groupOrder,
+    (type) => TYPE_LABELS[type] || type
+  )
+
+  // The first group is shown by default, and a tab that disappears (its last
+  // match filtered away) falls back to the first one that's still there.
+  const current = groups.find((g) => g.key === activeGroup) || groups[0]
+
+  // Searching spans every category — scoping it to the open tab would hide
+  // matches behind tabs the user can't see, which reads as "no results".
+  const filtered = search ? (resources || []).filter(matchesQuery) : current ? current.items : []
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'var(--scrim-strong)',
+        zIndex: 1100,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+      }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        style={{
+          background: 'var(--bg-panel)',
+          border: '1px solid var(--border)',
+          borderRadius: 16,
+          padding: 24,
+          width: '100%',
+          maxWidth: 480,
+          maxHeight: '80vh',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label={t('common.close')}
+          style={{
+            position: 'absolute',
+            top: 14,
+            right: 14,
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            color: 'var(--text-muted)',
+          }}
+        >
+          <LuX size={18} />
+        </button>
+        <h3 style={{ fontSize: 16, fontWeight: 600, margin: '0 0 16px' }}>
+          {t('wiki.embedPickerTitle')}
+        </h3>
+
+        {uploadOpen ? (
+          <ImageUploadPanel
+            campaignId={campaignId}
+            onUploaded={handleUploaded}
+            onCancel={() => setUploadOpen(false)}
+          />
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <LuSearch
+                  size={14}
+                  style={{
+                    position: 'absolute',
+                    left: 10,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: 'var(--text-muted)',
+                  }}
+                />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('wiki.embedSearchPlaceholder')}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px 9px 32px',
+                    background: 'var(--bg-deep)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    color: 'var(--text)',
+                    fontSize: 14,
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <button
+                onClick={() => setUploadOpen(true)}
+                style={miniBtn}
+                title={t('wiki.uploadImage')}
+              >
+                <LuImage size={14} /> {t('wiki.uploadImage')}
+              </button>
+            </div>
+
+            {/* While searching, results span every category, so the tabs
+                would no longer describe what's listed below. */}
+            {!search && groups.length > 1 && (
+              <div style={{ marginBottom: 12 }}>
+                <SegmentControl
+                  value={current?.key}
+                  options={groups.map((g) => ({
+                    key: g.key,
+                    label: `${g.label} (${g.items.length})`,
+                  }))}
+                  onChange={setActiveGroup}
+                  equalWidth={false}
+                  asTabs
+                  label={t('wiki.embedCategoryTabs')}
+                />
+              </div>
+            )}
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {resources === null ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: 20 }}>
+                  <Spinner size={18} />
+                </div>
+              ) : filtered.length === 0 ? (
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', padding: '10px 4px' }}>
+                  {resources.length === 0 ? t('wiki.noLinkedResources') : t('common.noResults')}
+                </div>
+              ) : (
+                filtered.map((item) => {
+                  const isImage = item.resource_type === 'file' && item.is_image
+                  const Icon = isImage ? LuImage : TYPE_ICON[item.resource_type] || LuBookOpen
+                  const key = item.id
+                  const awaitingPage = pageFor === key
+                  const thumbUrl = thumbnailUrl(campaignId, item)
+                  return (
+                    <div
+                      key={key}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '8px 6px',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 4,
+                          flexShrink: 0,
+                          overflow: 'hidden',
+                          background: 'var(--bg-deep)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        {thumbUrl ? (
+                          <LazyImg
+                            src={thumbUrl}
+                            alt=""
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <Icon size={15} style={{ color: 'var(--text-muted)' }} />
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {item.name}
+                        </div>
+                      </div>
+
+                      {awaitingPage ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <input
+                            ref={pageInputRef}
+                            type="number"
+                            min="1"
+                            value={pageNum}
+                            onChange={(e) => setPageNum(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                insert(item, pageNum || null)
+                              }
+                            }}
+                            placeholder={t('wiki.pageNum')}
+                            aria-label={t('wiki.pageNum')}
+                            style={{
+                              width: 64,
+                              padding: '4px 6px',
+                              background: 'var(--bg-deep)',
+                              border: '1px solid var(--border)',
+                              borderRadius: 6,
+                              color: 'var(--text)',
+                              fontSize: 12,
+                            }}
+                          />
+                          <button
+                            onClick={() => insert(item, pageNum || null)}
+                            style={miniBtn}
+                            title={t('wiki.insert')}
+                          >
+                            {t('wiki.insert')}
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {item.resource_type === 'book' && (
+                            <button
+                              onClick={() => {
+                                setPageFor(key)
+                                setPageNum('')
+                              }}
+                              style={miniBtnGhost}
+                              title={t('wiki.withPage')}
+                            >
+                              {t('wiki.withPage')}
+                            </button>
+                          )}
+                          <button onClick={() => insert(item, null)} style={miniBtn}>
+                            <LuPlus size={13} /> {t('wiki.insert')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Thumbnail URL for a resource row, or null when there's nothing to show.
+function thumbnailUrl(campaignId: string, item: Resource): string | null {
+  if (item.resource_type === 'file') {
+    return item.is_image ? campaigns.fileUrl(campaignId, item.resource_id) : null
+  }
+  if (!item.has_thumbnail) return null
+  // Audio has no thumbnail endpoint — it serves folder/embedded artwork instead.
+  if (item.resource_type === 'audio') {
+    return mediaUrl(`/audio/${item.resource_id}/artwork`)
+  }
+  const seg = item.resource_type === 'book' ? 'books' : `${item.resource_type}s`
+  return mediaUrl(`/${seg}/${item.resource_id}/thumbnail`)
+}

@@ -1,0 +1,764 @@
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
+import { render, screen, waitFor, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import ReaderView from './ReaderView'
+import api from '../api'
+import { getRecentBooks } from '../hooks/useBookPrefs'
+
+const mockGet = vi.mocked(api.get) as unknown as Mock
+
+// ── Mocks ────────────────────────────────────────────────────────────────────
+
+vi.mock('../api', () => ({
+  default: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  // Mirrors the real signature's query params so tests can assert the render
+  // width requested for a page.
+  mediaUrl: (path: string, params?: Record<string, string>) =>
+    `/media${path}${params ? `?${new URLSearchParams(params).toString()}` : ''}`,
+  // Mirrors the real helper: `v` is the book's content token, present only once
+  // the scanner has hashed the file.
+  bookPageUrl: (bookId: string, page: number, width: string, contentToken?: string) =>
+    `/media/books/${bookId}/page/${page}?${new URLSearchParams(
+      contentToken ? { width, v: contentToken } : { width }
+    ).toString()}`,
+}))
+
+vi.mock('../hooks/useReaderGestures', () => ({
+  default: () => ({ handleTouchStart: vi.fn(), handleTouchMove: vi.fn(), handleTouchEnd: vi.fn() }),
+}))
+
+vi.mock('../context/FavoritesContext', () => ({
+  useFavorites: () => ({ isFavorite: () => false, toggleFavorite: vi.fn() }),
+}))
+
+vi.mock('../components/campaigns/AddToCampaignButton', () => ({
+  default: () => null,
+}))
+
+// Defaults to a desktop viewport; the mobile-layout tests flip it.
+const mockIsMobile = { value: false }
+vi.mock('../hooks/useIsMobile', () => ({ default: () => mockIsMobile.value }))
+
+// Capture setSearchParams and navigate calls so we can assert behaviour.
+const mockSetSearchParams = vi.fn()
+const mockNavigate = vi.fn()
+vi.mock('react-router-dom', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-router-dom')>()
+  return {
+    ...actual,
+    useSearchParams: () => [new URLSearchParams(), mockSetSearchParams],
+    useNavigate: () => mockNavigate,
+  }
+})
+
+// ── Fixtures ─────────────────────────────────────────────────────────────────
+
+const BOOK = {
+  id: 'book-1',
+  title: 'Test Book',
+  page_count: 100,
+  mime_type: 'application/pdf',
+  indexed: true,
+  has_thumbnail: false,
+}
+
+const TOC = {
+  toc: [
+    { title: 'Chapter 1', page: 1, children: [] },
+    { title: 'Chapter 5', page: 81, children: [] },
+  ],
+}
+
+const BOOKMARKS = [{ id: 1, page_number: 55, label: 'My mark', notes: '', selected_text: null }]
+
+function setupApiMocks() {
+  mockGet.mockImplementation((url) => {
+    if (url.includes('/toc')) return Promise.resolve(TOC)
+    if (url.includes('/bookmarks')) return Promise.resolve(BOOKMARKS)
+    if (url.includes('/search')) return Promise.resolve({ total: 0, results: [] })
+    if (url.includes('/text')) return Promise.resolve({ text: '' })
+    if (url.includes('/words')) return Promise.resolve(null)
+    // Default: book detail
+    return Promise.resolve(BOOK)
+  })
+}
+
+function renderReader(bookId = 'book-1', { locationState }: { locationState?: unknown } = {}) {
+  const entry = locationState
+    ? { pathname: `/library/book/${bookId}`, state: locationState }
+    : `/library/book/${bookId}`
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/library/book/:bookId" element={<ReaderView key={bookId} />} />
+      </Routes>
+    </MemoryRouter>
+  )
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Wait until the reader has stopped re-rendering from its initial data loads.
+ *
+ * The view fires several independent fetches on mount (book, TOC, bookmarks,
+ * text), and every resolution re-renders. Anything that depends on a stable
+ * render — chiefly the keydown handler, which is re-registered each time
+ * currentPage changes — must not run until those have all landed.
+ *
+ * Waits for setSearchParams to stay untouched across consecutive turns of the
+ * microtask queue, which is the observable signal that the settling effects
+ * have finished. Uses only microtasks, so no real timers and no fixed sleep.
+ */
+async function waitForReaderIdle() {
+  let previous = -1
+  // Three consecutive quiet turns: one to drain the current promise chain, and
+  // two more to catch an effect that schedules another effect.
+  let quietTurns = 0
+  while (quietTurns < 3) {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    const calls = mockSetSearchParams.mock.calls.length
+    quietTurns = calls === previous ? quietTurns + 1 : 0
+    previous = calls
+  }
+}
+
+/** Returns the `replace` option from the most recent setSearchParams call. */
+function lastReplaceOption() {
+  const calls = mockSetSearchParams.mock.calls
+  if (calls.length === 0) return undefined
+  const opts = calls[calls.length - 1][1]
+  return opts?.replace
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+describe('ReaderView — jump navigation history behaviour', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupApiMocks()
+    // Stub rAF so effects that schedule frames run synchronously in jsdom.
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+  })
+
+  it('renders the book title after loading', async () => {
+    renderReader()
+    await waitFor(() => expect(screen.getByText('Test Book')).toBeInTheDocument())
+  })
+
+  it('navigates with the ArrowRight / ArrowLeft keys', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+
+    // The title appearing only means the book detail resolved — the TOC,
+    // bookmarks, and text fetches are still landing, and each one re-renders
+    // the reader. The keydown handler closes over currentPage and so is torn
+    // down and re-registered on every one of those renders, meaning a key
+    // dispatched into that window can hit a detached listener and be lost.
+    // Wait for the component to go quiet first, or this races (issue #157 CI
+    // flake: the ArrowRight was dropped and the assertion below timed out).
+    await waitForReaderIdle()
+
+    mockSetSearchParams.mockClear()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }))
+    })
+
+    // Assert the *specific* navigation, not merely that something called
+    // setSearchParams — a stray settling effect would satisfy a bare
+    // toHaveBeenCalled() and hide a dropped keypress.
+    await waitFor(() =>
+      expect(mockSetSearchParams).toHaveBeenCalledWith({ page: '2' }, { replace: true })
+    )
+
+    mockSetSearchParams.mockClear()
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))
+    })
+    // Back to page 1, which drops the param entirely rather than writing page=1.
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalledWith({}, { replace: true }))
+  })
+
+  it('the "?" key toggles the shortcuts overlay', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))
+    })
+    // Toggling shortcuts on then off should not throw and keeps the reader mounted.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(screen.getByText('Test Book')).toBeInTheDocument()
+  })
+
+  it('the "f" key toggles the favorite without crashing', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f' }))
+    })
+    expect(screen.getByText('Test Book')).toBeInTheDocument()
+  })
+
+  it('uses replace:true for the initial page sync (continuous reading)', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    // Any setSearchParams call from normal reading should use replace:true.
+    // The effect fires after mount; all such calls must be replace.
+    const calls = mockSetSearchParams.mock.calls
+    for (const [, opts] of calls) {
+      expect(opts?.replace).toBe(true)
+    }
+  })
+
+  it('uses replace:false (push) when navigating via the ToC', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    mockSetSearchParams.mockClear()
+
+    // Open the ToC panel.
+    await userEvent.click(screen.getByTitle('Contents'))
+
+    // Wait for ToC to load and click a chapter link.
+    await waitFor(() => screen.getByText('Chapter 5'))
+    await userEvent.click(screen.getByText('Chapter 5'))
+
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+    expect(lastReplaceOption()).toBe(false)
+  })
+
+  it('uses replace:false (push) when navigating via a bookmark', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    mockSetSearchParams.mockClear()
+
+    // Open the bookmarks panel.
+    await userEvent.click(screen.getByTitle('Bookmarks'))
+
+    // Wait for bookmark list and click it.
+    await waitFor(() => screen.getByText('My mark'))
+    await userEvent.click(screen.getByText('My mark'))
+
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+    expect(lastReplaceOption()).toBe(false)
+  })
+
+  it('uses replace:true for navigation immediately after a jump (continuous reading resumes)', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+
+    // Jump via ToC.
+    await userEvent.click(screen.getByTitle('Contents'))
+    await waitFor(() => screen.getByText('Chapter 5'))
+    await userEvent.click(screen.getByText('Chapter 5'))
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+
+    mockSetSearchParams.mockClear()
+
+    // Now navigate with the next-page arrow — should go back to replace.
+    await userEvent.click(screen.getByLabelText('Next page'))
+
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+    expect(lastReplaceOption()).toBe(true)
+  })
+
+  it('resets pushNextRef after the first jump so consecutive arrow presses replace', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+
+    // Jump via ToC to a page that is different from the current page (1).
+    await userEvent.click(screen.getByTitle('Contents'))
+    await waitFor(() => screen.getByText('Chapter 5'))
+    await userEvent.click(screen.getByText('Chapter 5'))
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+
+    // Verify the flag was consumed: second setSearchParams call (arrow navigation)
+    // must use replace:true.
+    mockSetSearchParams.mockClear()
+    await userEvent.click(screen.getByLabelText('Next page'))
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+    expect(lastReplaceOption()).toBe(true)
+
+    // A third press still replaces.
+    mockSetSearchParams.mockClear()
+    await userEvent.click(screen.getByLabelText('Next page'))
+    await waitFor(() => expect(mockSetSearchParams).toHaveBeenCalled())
+    expect(lastReplaceOption()).toBe(true)
+  })
+})
+
+describe('ReaderView — spread mode (integration)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupApiMocks()
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    localStorage.clear()
+  })
+
+  it('persists spreadOffset to localStorage when cover pairing is toggled', async () => {
+    localStorage.setItem('grimoire:book:book-1', JSON.stringify({ mode: 'spread' }))
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+
+    await userEvent.click(screen.getByLabelText('More actions'))
+    // The menu stays open across toggles, so both flips work in one pass.
+    await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Pair cover with page 2' }))
+    expect(JSON.parse(localStorage.getItem('grimoire:book:book-1')!).spreadOffset).toBe(1)
+
+    await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Pair cover with page 2' }))
+    expect(JSON.parse(localStorage.getItem('grimoire:book:book-1')!).spreadOffset).toBe(0)
+  })
+
+  it('persists joining the spread pages per book (issue #588)', async () => {
+    localStorage.setItem('grimoire:book:book-1', JSON.stringify({ mode: 'spread' }))
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await userEvent.click(screen.getByLabelText('More actions'))
+    await userEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Join pages' }))
+    expect(JSON.parse(localStorage.getItem('grimoire:book:book-1')!).joinSpread).toBe(true)
+  })
+
+  it('restores joined spreads on mount', async () => {
+    localStorage.setItem(
+      'grimoire:book:book-1',
+      JSON.stringify({ mode: 'spread', joinSpread: true, page: 2 })
+    )
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await userEvent.click(screen.getByLabelText('More actions'))
+    expect(screen.getByRole('menuitemcheckbox', { name: 'Join pages' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(document.querySelector('[data-joined-spread]')).toBeInTheDocument()
+  })
+
+  it('opens on the last page when the saved page is past the end of the book', async () => {
+    // The file was replaced by a shorter one since the page was saved (#497).
+    localStorage.setItem('grimoire:book:book-1', JSON.stringify({ page: 250 }))
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    expect(screen.getByLabelText('Current page number')).toHaveValue('100')
+  })
+
+  it('keeps a saved page that is still inside the book', async () => {
+    localStorage.setItem('grimoire:book:book-1', JSON.stringify({ page: 42 }))
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    expect(screen.getByLabelText('Current page number')).toHaveValue('42')
+  })
+
+  it('restores spreadOffset from localStorage on mount', async () => {
+    localStorage.setItem(
+      'grimoire:book:book-1',
+      JSON.stringify({ mode: 'spread', spreadOffset: 1 })
+    )
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+
+    await userEvent.click(screen.getByLabelText('More actions'))
+    expect(
+      screen.getByRole('menuitemcheckbox', { name: 'Pair cover with page 2' })
+    ).toHaveAttribute('aria-checked', 'true')
+  })
+})
+
+describe('ReaderView — back button navigation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupApiMocks()
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+  })
+
+  it('navigates to location.state.from when present', async () => {
+    renderReader('book-1', { locationState: { from: '/library/system/system-1' } })
+    await waitFor(() => screen.getByText('Test Book'))
+
+    await userEvent.click(screen.getByLabelText('Back'))
+
+    // Flagged as a return so the referring view restores its search/sort/filter.
+    expect(mockNavigate).toHaveBeenCalledWith('/library/system/system-1', {
+      state: { restoreView: true },
+    })
+    expect(mockNavigate).not.toHaveBeenCalledWith(-1)
+  })
+
+  it('falls back to navigate(-1) when no location.state.from', async () => {
+    renderReader('book-1')
+    await waitFor(() => screen.getByText('Test Book'))
+
+    await userEvent.click(screen.getByLabelText('Back'))
+
+    expect(mockNavigate).toHaveBeenCalledWith(-1)
+  })
+})
+
+describe('ReaderView — archive files (issue #94)', () => {
+  const ARCHIVE_BOOK = {
+    id: 'arch-1',
+    title: 'LANCER Bundle',
+    filename: 'lancer.zip',
+    page_count: 0,
+    mime_type: 'application/zip',
+    indexed: false,
+    has_thumbnail: false,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGet.mockImplementation((url) => {
+      if (url.includes('/toc')) return Promise.resolve({ toc: [] })
+      if (url.includes('/bookmarks')) return Promise.resolve([])
+      return Promise.resolve(ARCHIVE_BOOK)
+    })
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+  })
+
+  it('shows a download panel instead of the page reader', async () => {
+    renderReader('arch-1')
+    await waitFor(() => expect(screen.getByText('LANCER Bundle')).toBeInTheDocument())
+    // No page image / reader toolbar controls — just a download action.
+    const link = screen.getByRole('link', { name: /download/i })
+    expect(link).toHaveAttribute('href', '/media/books/arch-1/file')
+    expect(link).toHaveAttribute('download', 'lancer.zip')
+  })
+})
+
+describe('ReaderView — zoom (issue #249)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupApiMocks()
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+  })
+
+  const press = (key: string) =>
+    act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key }))
+    })
+
+  it('zooms in and out with the +/- keys', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    expect(screen.getByText('100%')).toBeInTheDocument()
+
+    await press('+')
+    expect(screen.getByText('125%')).toBeInTheDocument()
+    await press('-')
+    expect(screen.getByText('100%')).toBeInTheDocument()
+  })
+
+  it('accepts "=" as zoom in, so Shift is not required', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await press('=')
+    expect(screen.getByText('125%')).toBeInTheDocument()
+  })
+
+  it('resets to 100% with the 0 key', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await press('+')
+    await press('+')
+    expect(screen.getByText('150%')).toBeInTheDocument()
+
+    await press('0')
+    expect(screen.getByText('100%')).toBeInTheDocument()
+  })
+
+  it('does not zoom past the clamp', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    for (let i = 0; i < 14; i++) await press('+')
+    // Ceiling is 8x (issue #574); past the whole-page image's limit, zoom
+    // tiles keep it sharp.
+    expect(screen.getByText('800%')).toBeInTheDocument()
+  })
+
+  it('ignores the zoom keys while a text input has focus', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true }))
+    })
+    expect(screen.getByText('100%')).toBeInTheDocument()
+    input.remove()
+  })
+
+  it('keeps the zoom when the page changes', async () => {
+    const { container } = renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await press('+')
+    await press('+')
+    expect(screen.getByText('150%')).toBeInTheDocument()
+
+    await press('ArrowRight')
+    await waitFor(() => expect(screen.getByAltText(/page 2/i)).toBeInTheDocument())
+    expect(screen.getByText('150%')).toBeInTheDocument()
+    const page = container
+      .querySelector('img[data-page-image]')!
+      .closest<HTMLElement>('[style*="scale"]')
+    expect(page!.style.transform).toContain('scale(1.5)')
+  })
+
+  it('steps through coarser zoom levels above 2x', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    for (let i = 0; i < 5; i++) await press('+')
+    expect(screen.getByText('250%')).toBeInTheDocument()
+    await press('-')
+    expect(screen.getByText('200%')).toBeInTheDocument()
+  })
+
+  it('requests a sharper page render once zoomed past the threshold', async () => {
+    const { container } = renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    const src = () => container.querySelector('img[src*="/page/"]')?.getAttribute('src') ?? ''
+    expect(src()).toContain('width=1600')
+
+    // 1.75x crosses the threshold, so the page is re-fetched at a higher width
+    // instead of being scaled up as a bitmap.
+    await press('+')
+    await press('+')
+    await press('+')
+    await waitFor(() => expect(src()).toContain('width=2800'))
+  })
+})
+
+describe('ReaderView — mobile panel layout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupApiMocks()
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    mockIsMobile.value = true
+  })
+
+  afterEach(() => {
+    mockIsMobile.value = false
+  })
+
+  /** The scroll/zoom container the page images render into. */
+  function pageContainer() {
+    return document.querySelector('[style*="--bg-deep"]')
+  }
+
+  it('shows the page when no panel is open', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    expect(pageContainer()).toHaveStyle({ display: 'flex' })
+  })
+
+  // A 280px panel beside the page leaves neither usable on a phone, so the
+  // panel takes the viewport and the page steps aside entirely.
+  it('hides the page while a panel is open, giving the panel the viewport', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    await userEvent.click(screen.getByTitle('Contents'))
+
+    await waitFor(() => expect(pageContainer()).toHaveStyle({ display: 'none' }))
+    expect(screen.getByTestId('reader-sidebar')).toBeInTheDocument()
+  })
+
+  it('brings the page back when the panel closes', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    await userEvent.click(screen.getByTitle('Contents'))
+    await waitFor(() => expect(pageContainer()).toHaveStyle({ display: 'none' }))
+
+    // Toggling the same panel button closes it.
+    await userEvent.click(screen.getByTitle('Contents'))
+    await waitFor(() => expect(pageContainer()).toHaveStyle({ display: 'flex' }))
+  })
+
+  // `main` is a flex column that can also hold the pending-invites banner, so a
+  // reader sized `height: 100%` overflowed it and the foot of the page slid
+  // under the mobile nav (issue #520). It takes the space left over instead.
+  it('sizes the reader to the space left in main rather than 100% of it', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    const root = document.querySelector<HTMLElement>('.fade-in')
+    expect(root).toHaveStyle({ flex: '1', minHeight: '0' })
+    expect(root!.style.height).toBe('')
+  })
+
+  it('keeps the page beside the panel on a desktop', async () => {
+    mockIsMobile.value = false
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    await userEvent.click(screen.getByTitle('Contents'))
+
+    await waitFor(() => expect(screen.getByTestId('reader-sidebar')).toBeInTheDocument())
+    expect(pageContainer()).toHaveStyle({ display: 'flex' })
+  })
+})
+
+describe('ReaderView — export (issue #207)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setupApiMocks()
+    const base = mockGet.getMockImplementation()!
+    mockGet.mockImplementation((url) =>
+      url.endsWith('/size') ? Promise.resolve({ width: 600, height: 800 }) : base(url)
+    )
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      cb()
+      return 0
+    })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+  })
+
+  const pageContainer = () => document.querySelector('[style*="touch-action: none"]')
+
+  it('opens from the overflow menu on the page being read', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Export pages & cut-outs' }))
+
+    expect(screen.getByLabelText('Pages')).toHaveValue('1')
+    expect(api.get).toHaveBeenCalledWith('/books/book-1/page/1/size')
+  })
+
+  it('toggles with the "e" key and swaps the page for the cut-out stage', async () => {
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    await userEvent.keyboard('e')
+    expect(screen.getByRole('radio', { name: 'Whole pages' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Cut out' }))
+    expect(await screen.findByTestId('cutout-stage')).toBeInTheDocument()
+    expect(pageContainer()).toHaveStyle({ display: 'none' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close export' }))
+    expect(screen.queryByTestId('cutout-stage')).not.toBeInTheDocument()
+    expect(pageContainer()).toHaveStyle({ display: 'flex' })
+
+    await userEvent.keyboard('e')
+    expect(screen.getByRole('button', { name: 'Close export' })).toBeInTheDocument()
+    await userEvent.keyboard('e')
+    expect(screen.queryByRole('button', { name: 'Close export' })).not.toBeInTheDocument()
+  })
+
+  it('is not offered for comic archives', async () => {
+    const base = mockGet.getMockImplementation()!
+    mockGet.mockImplementation((url) =>
+      url === '/books/book-1'
+        ? Promise.resolve({
+            ...BOOK,
+            filename: 'issue.cbz',
+            mime_type: 'application/vnd.comicbook+zip',
+          })
+        : base(url)
+    )
+    renderReader()
+    await waitFor(() => screen.getByText('Test Book'))
+    await waitForReaderIdle()
+
+    await userEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(
+      screen.queryByRole('menuitem', { name: 'Export pages & cut-outs' })
+    ).not.toBeInTheDocument()
+    await userEvent.keyboard('{Escape}e')
+    expect(screen.queryByRole('button', { name: 'Close export' })).not.toBeInTheDocument()
+  })
+})
+
+describe('ReaderView — a book that fails to load', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  const failBookWith = (error: Error) =>
+    mockGet.mockImplementation((url) =>
+      url === '/books/book-1' ? Promise.reject(error) : Promise.resolve({})
+    )
+
+  it('says the book was not found on a 404, instead of spinning forever', async () => {
+    failBookWith(Object.assign(new Error('Not found'), { status: 404 }))
+    renderReader()
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This book could not be found. It may have been moved or removed.'
+    )
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('says the book could not be loaded on any other failure', async () => {
+    failBookWith(new TypeError('Failed to fetch'))
+    renderReader()
+    expect(await screen.findByRole('alert')).toHaveTextContent('This book could not be loaded.')
+  })
+
+  it('offers a way back out of the error', async () => {
+    failBookWith(Object.assign(new Error('Server error'), { status: 500 }))
+    renderReader('book-1', { locationState: { from: '/library' } })
+    await screen.findByRole('alert')
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(mockNavigate).toHaveBeenCalledWith('/library', { state: { restoreView: true } })
+  })
+
+  it('does not record a book as recent when its load lands after the reader closed', async () => {
+    let resolveBook!: (value: unknown) => void
+    mockGet.mockImplementation((url) =>
+      url === '/books/book-1'
+        ? new Promise((resolve) => (resolveBook = resolve))
+        : Promise.resolve({})
+    )
+    const { unmount } = renderReader()
+    await waitFor(() => expect(resolveBook).toBeDefined())
+    unmount()
+    await act(async () => {
+      resolveBook(BOOK)
+    })
+    expect(getRecentBooks()).toEqual([])
+  })
+})

@@ -1,0 +1,371 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import TagsView from './TagsView'
+import { pagedFolderItems, pagedTagItems } from '../test/fakeTagItems'
+
+// --- Mocks -----------------------------------------------------------------
+
+const mockList = vi.fn()
+const mockItems = vi.fn()
+const mockRename = vi.fn()
+const mockRemove = vi.fn()
+
+vi.mock('../api', () => ({
+  tags: {
+    list: (...a: unknown[]) => mockList(...a),
+    // The view pages a tag's items now (issue #221). `mockItems` still
+    // describes the whole tag; these answer the paged requests from it.
+    items: (internal: string, type: string, opts: { limit?: number; offset?: number }) =>
+      pagedTagItems(mockItems(internal), type, opts),
+    folderItems: (
+      internal: string,
+      type: string,
+      folder: string,
+      opts: { limit?: number; offset?: number }
+    ) => pagedFolderItems(mockItems(internal), type, folder, opts),
+    rename: (...a: unknown[]) => mockRename(...a),
+    remove: (...a: unknown[]) => mockRemove(...a),
+  },
+  mediaUrl: (p: string) => `http://localhost${p}`,
+}))
+
+let mockRole = 'admin'
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ user: { role: mockRole } }),
+}))
+
+const mockToggleFavorite = vi.fn()
+const mockIsFavorite = vi.fn<(type: string, id: string) => boolean>(() => false)
+vi.mock('../context/FavoritesContext', () => ({
+  useFavorites: () => ({ isFavorite: mockIsFavorite, toggleFavorite: mockToggleFavorite }),
+}))
+
+// Cards pull in media/context — stub to plain output. TagTypeSection renders
+// for real so its type/folder layout is exercised.
+vi.mock('../components/favorites/BookFavorite', () => ({
+  default: ({ item }: { item: { item_id: string } }) => (
+    <div data-testid="book-card">{item.item_id}</div>
+  ),
+}))
+vi.mock('../components/favorites/MapFavorite', () => ({
+  default: ({ item }: { item: { item_id: string } }) => (
+    <div data-testid="map-card">{item.item_id}</div>
+  ),
+}))
+vi.mock('../components/favorites/TokenFavorite', () => ({
+  default: ({ item }: { item: { item_id: string } }) => (
+    <div data-testid="token-card">{item.item_id}</div>
+  ),
+}))
+vi.mock('../components/favorites/AudioFavorite', () => ({
+  default: ({ item }: { item: { item_id: string } }) => (
+    <div data-testid="audio-card">{item.item_id}</div>
+  ),
+}))
+vi.mock('../components/favorites/SystemFavorite', () => ({
+  default: ({ item }: { item: { item_id: string } }) => (
+    <div data-testid="system-card">{item.item_id}</div>
+  ),
+}))
+
+function renderView(initialEntry = '/tags') {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <TagsView />
+    </MemoryRouter>
+  )
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockRole = 'admin'
+  mockIsFavorite.mockReturnValue(false)
+  mockList.mockResolvedValue({
+    tags: [
+      { internal: 'forest', display: 'Forest', category: 'map', count: 3, is_favorite: false },
+      { internal: 'strahd', display: 'Strahd', category: 'shared', count: 1, is_favorite: true },
+    ],
+  })
+  mockItems.mockResolvedValue({
+    internal: 'forest',
+    display: 'Forest',
+    items: [
+      { item_type: 'map', item_id: 'm1' },
+      { item_type: 'book', item_id: 'b1' },
+    ],
+    folders: [],
+  })
+})
+
+describe('TagsView', () => {
+  it('lists all tags with their usage counts', async () => {
+    renderView()
+    expect(await screen.findByText('Forest')).toBeInTheDocument()
+    expect(screen.getByText('Strahd')).toBeInTheDocument()
+    expect(screen.getByText('3')).toBeInTheDocument()
+  })
+
+  it('shows an empty state when there are no tags', async () => {
+    mockList.mockResolvedValue({ tags: [] })
+    renderView()
+    expect(await screen.findByText(/no tags yet/i)).toBeInTheDocument()
+  })
+
+  it('filters the tag list by text', async () => {
+    renderView()
+    await screen.findByText('Forest')
+    await userEvent.type(screen.getByLabelText(/filter tags/i), 'stra')
+    expect(screen.queryByText('Forest')).not.toBeInTheDocument()
+    expect(screen.getByText('Strahd')).toBeInTheDocument()
+  })
+
+  it('filters to favorites only when the favorites toggle is on', async () => {
+    renderView()
+    await screen.findByText('Forest')
+    // Strahd is the only favorited tag in the fixture.
+    await userEvent.click(screen.getByLabelText(/favorites only/i))
+    expect(screen.queryByText('Forest')).not.toBeInTheDocument()
+    expect(screen.getByText('Strahd')).toBeInTheDocument()
+  })
+
+  it('sorts tags by count when chosen', async () => {
+    renderView()
+    await screen.findByText('Forest')
+    await userEvent.selectOptions(screen.getByLabelText(/^sort$/i), 'count')
+    // Ascending by count → Strahd (1) before Forest (3).
+    const names = screen.getAllByText(/Forest|Strahd/).map((n) => n.textContent)
+    expect(names.indexOf('Strahd')).toBeLessThan(names.indexOf('Forest'))
+  })
+
+  it('groups the tag list by category with Shared on top', async () => {
+    renderView()
+    await screen.findByText('Forest')
+    // Category group headers render (Shared and Map); Shared appears first.
+    const groups = screen.getAllByRole('group')
+    expect(groups[0]).toHaveAttribute('aria-label', expect.stringMatching(/shared/i))
+    // Strahd (shared) is inside the Shared group; Forest (map) inside the Map group.
+    expect(groups[0]).toHaveTextContent('Strahd')
+    expect(screen.getByRole('group', { name: /map/i })).toHaveTextContent('Forest')
+  })
+
+  it('collapses a category group when its header is clicked', async () => {
+    renderView()
+    await screen.findByText('Forest')
+    // The Map group header toggles its tags; Forest is under Map.
+    expect(screen.getByText('Forest')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /^map/i }))
+    expect(screen.queryByText('Forest')).not.toBeInTheDocument()
+    // Shared group is unaffected — Strahd still shows.
+    expect(screen.getByText('Strahd')).toBeInTheDocument()
+    // Expanding again brings it back.
+    await userEvent.click(screen.getByRole('button', { name: /^map/i }))
+    expect(screen.getByText('Forest')).toBeInTheDocument()
+  })
+
+  it('favorites a tag from the list heart', async () => {
+    renderView()
+    await screen.findByText('Forest')
+    // Two hearts render (Forest not-fav, Strahd fav). Click Forest's.
+    const hearts = screen.getAllByLabelText(/^favorite$/i)
+    await userEvent.click(hearts[0])
+    expect(mockToggleFavorite).toHaveBeenCalledWith('tag', 'forest')
+  })
+
+  it('loads and groups a tag’s items when selected', async () => {
+    renderView()
+    await userEvent.click(await screen.findByText('Forest'))
+    await waitFor(() => expect(mockItems).toHaveBeenCalledWith('forest'))
+    expect(await screen.findByTestId('map-card')).toHaveTextContent('m1')
+    expect(screen.getByTestId('book-card')).toHaveTextContent('b1')
+  })
+
+  it('renders folder groups for folder-derived tags', async () => {
+    mockItems.mockResolvedValue({
+      internal: 'forest',
+      display: 'Forest',
+      items: [],
+      folders: [
+        { resource_type: 'map', path: 'Woods', items: [{ item_type: 'map', item_id: 'mf1' }] },
+      ],
+    })
+    renderView('/tags?tag=forest')
+    await waitFor(() => expect(mockItems).toHaveBeenCalledWith('forest'))
+    expect(await screen.findByText('Woods')).toBeInTheDocument()
+    // The folder's items page in after its header renders (issue #221).
+    expect(await screen.findByTestId('map-card')).toHaveTextContent('mf1')
+  })
+
+  it('deep-links to a tag from the ?tag= query param', async () => {
+    renderView('/tags?tag=forest')
+    await waitFor(() => expect(mockItems).toHaveBeenCalledWith('forest'))
+    expect(await screen.findByRole('heading', { name: 'Forest' })).toBeInTheDocument()
+  })
+
+  it('lets an editor rename a tag’s display value', async () => {
+    mockRename.mockResolvedValue({ internal: 'forest', display: 'Deep Forest' })
+    renderView('/tags?tag=forest')
+    await screen.findByRole('heading', { name: 'Forest' })
+    await userEvent.click(screen.getByLabelText(/^rename$/i))
+    const input = screen.getByLabelText(/display name/i)
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Deep Forest')
+    await userEvent.click(screen.getByLabelText(/save/i))
+    await waitFor(() => expect(mockRename).toHaveBeenCalledWith('forest', 'Deep Forest'))
+  })
+
+  it('hides edit controls for non-editors', async () => {
+    mockRole = 'player'
+    renderView('/tags?tag=forest')
+    await screen.findByRole('heading', { name: 'Forest' })
+    expect(screen.queryByLabelText(/^rename$/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/delete tag/i)).not.toBeInTheDocument()
+  })
+
+  it('deletes a tag after confirmation', async () => {
+    mockRemove.mockResolvedValue({})
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderView('/tags?tag=forest')
+    await screen.findByRole('heading', { name: 'Forest' })
+    await userEvent.click(screen.getByLabelText(/delete tag/i))
+    await waitFor(() => expect(mockRemove).toHaveBeenCalledWith('forest'))
+    vi.mocked(window.confirm).mockRestore()
+  })
+
+  // The tag list and the selected tag's items each own a scrollbar, so a long
+  // tag list no longer drags the whole page (and the detail column with it).
+  // That only works while every ancestor is height-bounded — an unbounded
+  // `min-height: 100%` chain let both panels grow onto one page scrollbar.
+  describe('independent panel scrolling', () => {
+    it('gives the tag list and the detail column their own scroll containers', async () => {
+      renderView()
+      await screen.findByRole('list')
+
+      const list = screen.getByRole('list')
+      expect(list).toHaveStyle({ overflowY: 'auto' })
+      expect(list).toHaveStyle({ flex: '1' })
+
+      const detail = document.querySelector('.tags-detail-panel')
+      expect(detail).toHaveStyle({ overflowY: 'auto' })
+    })
+
+    it('bounds the page column so the panels size to the space left over', async () => {
+      const { container } = renderView()
+      await screen.findByRole('list')
+
+      // `minHeight: 0` (not `100%`) is what allows the flex children to shrink
+      // below their content height and scroll internally.
+      const root = container.querySelector('.fade-in')
+      expect(root).toHaveStyle({ minHeight: '0px' })
+      expect(root!.firstElementChild).toHaveStyle({ minHeight: '0px' })
+      expect(document.querySelector('.tags-layout')).toBeInTheDocument()
+    })
+  })
+
+  // Download buttons at the tag / type / folder levels (issue #401), wired to
+  // the shared archive modal the media galleries use.
+  describe('archive downloads', () => {
+    it('opens the format modal for the whole tag', async () => {
+      renderView('/tags?tag=forest')
+      await screen.findByLabelText('Download everything tagged Forest')
+
+      await userEvent.click(screen.getByLabelText('Download everything tagged Forest'))
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText('Everything tagged \u201cForest\u201d')).toBeInTheDocument()
+    })
+
+    it('offers a per-type download for each section', async () => {
+      renderView('/tags?tag=forest')
+      await screen.findByLabelText('Download everything tagged Forest')
+
+      expect(screen.getByTitle('Download all Maps tagged forest')).toBeInTheDocument()
+      expect(screen.getByTitle('Download all Books tagged forest')).toBeInTheDocument()
+    })
+
+    it('offers a download on a tagged folder group', async () => {
+      mockItems.mockResolvedValue({
+        internal: 'forest',
+        display: 'Forest',
+        items: [],
+        folders: [{ resource_type: 'map', path: 'woods', items: [{ item_id: 'mf1' }] }],
+      })
+      renderView('/tags?tag=forest')
+
+      expect(await screen.findByTitle('Download Woods')).toBeInTheDocument()
+    })
+
+    it('closes the modal without navigating away', async () => {
+      renderView('/tags?tag=forest')
+      await screen.findByLabelText('Download everything tagged Forest')
+
+      await userEvent.click(screen.getByLabelText('Download everything tagged Forest'))
+      await userEvent.click(screen.getByText('Cancel'))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      // The detail pane is still showing the same tag.
+      expect(screen.getByRole('heading', { name: 'Forest' })).toBeInTheDocument()
+    })
+  })
+})
+
+describe('TagsView — long tag lists start collapsed', () => {
+  // 20 map tags and 10 shared ones: past the threshold, across two groups.
+  const manyTags = () => ({
+    tags: [
+      ...Array.from({ length: 20 }, (_, i) => ({
+        internal: `map${i}`,
+        display: `Map Tag ${i}`,
+        category: 'map',
+        count: 1,
+        is_favorite: false,
+      })),
+      ...Array.from({ length: 10 }, (_, i) => ({
+        internal: `shared${i}`,
+        display: `Shared Tag ${i}`,
+        category: 'shared',
+        count: 1,
+        is_favorite: false,
+      })),
+    ],
+  })
+
+  beforeEach(() => {
+    localStorage.clear()
+    mockList.mockResolvedValue(manyTags())
+  })
+
+  it('collapses every category group', async () => {
+    renderView()
+    await screen.findByRole('button', { name: /^map/i })
+    expect(screen.getByRole('button', { name: /^map/i })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Map Tag 0')).not.toBeInTheDocument()
+    expect(screen.queryByText('Shared Tag 0')).not.toBeInTheDocument()
+
+    // Opening one is remembered as the user's choice.
+    await userEvent.click(screen.getByRole('button', { name: /^map/i }))
+    expect(screen.getByText('Map Tag 0')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('grimoire:user-prefs')!).tagsCategoryCollapsed).toEqual({
+      shared: true,
+      system: true,
+      book: true,
+      token: true,
+      audio: true,
+      model: true,
+    })
+  })
+
+  it("keeps the selected tag's group open", async () => {
+    mockItems.mockResolvedValue({ internal: 'map3', display: 'Map Tag 3', items: [], folders: [] })
+    renderView('/tags?tag=map3')
+    expect(await screen.findByText('Map Tag 0')).toBeInTheDocument()
+    expect(screen.queryByText('Shared Tag 0')).not.toBeInTheDocument()
+  })
+
+  it('opens the groups when the filter narrows the list', async () => {
+    renderView()
+    await screen.findByRole('button', { name: /^map/i })
+    await userEvent.type(screen.getByLabelText(/filter tags/i), 'tag 1')
+    expect(screen.getByText('Map Tag 1')).toBeInTheDocument()
+    expect(screen.getByText('Shared Tag 1')).toBeInTheDocument()
+  })
+})
