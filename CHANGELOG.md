@@ -8,60 +8,63 @@ Release candidates are omitted; their contents are rolled into the stable releas
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-29
+
 ### Added
 
-- Character sheets can ship a second layout for phones, with its own stylesheet. On a phone-sized screen the sheet switches to it, and back again when you rotate to a wider view. Paste one in the new Mobile layout and Mobile styles boxes, or install a catalogue sheet that includes one
-- Grimoire can keep your Grimoire Codex DB collection in sync, so the site can show which books and systems you own and filter by them. Turn on **Keep my Grimoire Codex DB collection in sync** in the Grimoire Codex DB settings (or set `GRIMOIRE_CODEX_DB_SYNC_COLLECTION`): linking a book or system marks it as owned, unlinking takes the mark back, and **Sync collection now** catches books deleted from the library. Off by default
-- `OCR_MIN_TEXT_COVERAGE` sets how much of a PDF its own text must cover before it counts as a text book (default `0.5`); `0` only reads books with no text at all with OCR, as before
-- `OCR_MIN_PAGE_CHARS` sets how many characters a page must carry to count as a page of text (default `100`), so a running header on its own no longer passes for a text layer; `0` counts any text at all, as before
 - The Characters page can be sorted by name, system, campaign or sheet version as well as by when each character was last updated, and remembers your choice. Sorted by system or campaign, each gets its own heading; sorted by sheet, each card shows its sheet's version
+- Other players' characters you can see through a campaign sit in their own **Party members** section on the Characters page, grouped by campaign. Each card names the player, and each campaign's group can be folded away
 - A GM can give a character they prepared to one of their players: pick the player from **Give to player…** in the sheet's header. The character stays in the campaign with its art, the GM keeps edit access until the player switches it off, and the player gets the sheet and any of the GM's private content the character uses
 - When the catalogue has a newer version of a sheet you installed, the Characters page says so and **Update all** installs every update at once. **Manage sheets** and **Browse sheets** offer an **Update** button for each sheet
-- Other players' characters you can see through a campaign now sit in their own **Party members** section on the Characters page, grouped by campaign. Each card names the player, and each campaign's group can be folded away
+- Character sheets can ship a second layout for phones, with its own stylesheet. On a phone-sized screen the sheet switches to it, and back again when you rotate to a wider view. Paste one in the new **Mobile layout** and **Mobile styles** boxes, or install a catalogue sheet that includes one
+- Grimoire can keep your Grimoire Codex DB collection in sync, so the site can show which books and systems you own and filter by them. Turn on **Keep my Grimoire Codex DB collection in sync** in the Grimoire Codex DB settings (or set `GRIMOIRE_CODEX_DB_SYNC_COLLECTION`): linking a book or system marks it as owned, unlinking takes the mark back, and **Sync collection now** catches books deleted from the library. Off by default
+- The OPDS feed can be split into pages for e-readers that struggle with a large library: add `?page_size=100` to the end of the feed URL and every list of books arrives 100 at a time, with links to the next and previous pages. Without it the feed is unchanged
 - A book's language is filled in from `dc:language` in its `.opf` sidecar when it is added, and by a metadata refresh scan, the same as its other OPF fields
 - Scanned books are read in their own language: OCR reads a book in the language its Language field, its `.opf` sidecar or the PDF itself names first, followed by `OCR_LANGUAGES`, when that language's data file is installed. A German book in a library set to `eng` is read with `deu+eng`
-- The OPDS feed can be split into pages for e-readers that struggle with a large library: add `?page_size=100` to the end of the feed URL and every list of books arrives 100 at a time, with links to the next and previous pages. Without it the feed is unchanged
+- `OCR_MIN_TEXT_COVERAGE` sets how much of a PDF its own text must cover before it counts as a text book (default `0.5`); `0` only reads books with no text at all with OCR, as before
+- `OCR_MIN_PAGE_CHARS` sets how many characters a page must carry to count as a page of text (default `100`), so a running header on its own no longer passes for a text layer; `0` counts any text at all, as before
+- `RENDER_QUEUE_LIMIT` caps how many book pages may be rendering or waiting to render at once (default `16`). Past it, the reader is told to try again shortly and does so by itself
 
 ### Changed
 
-- Changing `SECRET_KEY` now also ends every guest invite code, as it already ends sessions, feed URLs and share links. After changing it, regenerate each guest's code from the campaign's guest list
-- Add-on scripts need approving once more after upgrading. An approval now covers the exact script and the environment variables it reads, so a script edited on disk, or an update that changes either, asks again; an update that leaves both alone keeps its approval. The approval dialog and each installed add-on's card list the environment variables the script reads
 - `TRUSTED_PROXIES` now defaults to the same host and Docker's default networks only (`127.0.0.0/8,::1,172.16.0.0/12`); 1.9 also trusted `10.0.0.0/8`, `192.168.0.0/16` and `fc00::/7`. If your reverse proxy reaches Grimoire from another machine on your LAN, a Kubernetes, Swarm or Podman network, a Docker network in the `192.168` pool, or Tailscale over IPv6, add its address to `TRUSTED_PROXIES` when you upgrade. Until you do, everyone behind it shares one sign-in rate limit, Active Sessions shows the proxy's address, and sign-in cookies are marked secure only if `BASE_URL` starts with `https://`. Grimoire logs a hint naming the proxy's address
+- Add-on scripts need approving once more after upgrading. An approval now covers the exact script and the environment variables it reads, so a script edited on disk, or an update that changes either, asks again; an update that leaves both alone keeps its approval. The approval dialog and each installed add-on's card list the environment variables the script reads
+- Changing `SECRET_KEY` now also ends every guest invite code, as it already ends sessions, feed URLs and share links. After changing it, regenerate each guest's code from the campaign's guest list. Codes already handed out keep working through the upgrade
+- A PDF is read with OCR when its own text covers less than half its pages, or its pages carry only a running header, rather than only when it has no text at all. Books added or re-indexed after upgrading may take longer to scan; books already in the library keep their text until you choose **Re-OCR**. Set `OCR_MIN_TEXT_COVERAGE` and `OCR_MIN_PAGE_CHARS` to `0` to keep the old behaviour
 - Grimoire's first load downloads about a fifth as much JavaScript: each page and each language other than English is fetched the first time it is opened, rather than all of them up front
 
 ### Fixed
 
 - Deleting, unindexing, moving or renaming a folder in the file manager no longer touches the books, folder tags or naming patterns of a folder whose name differs only by case (`core` and `Core`), or matches it with an `_` or `%` in place of another character. Deleting an empty `core` folder used to delete the records of every book in `Core`, losing their tags, favourites, bookmarks, reading progress and campaign links
+- Merging duplicates with "delete files" on no longer deletes the merged copies' files if saving the merge fails, which used to leave them listed in the library with nothing on disk
+- Renaming, moving or uploading into a library folder Grimoire doesn't have permission to write to no longer says the library is mounted read-only. It names the folder and the user Grimoire runs as, and points to `PUID`/`PGID`; a library that really is mounted read-only still says so
+- Grimoire stays root at start-up when the user it would switch to can't write to folders inside the library, not just the library folder itself, so moving and renaming keep working after updating from a version that ran as root
+- On NAS filesystems that refuse writes a permission check allows, Grimoire no longer switches to a user that can't write to the data folder and then fails to start; it tests the data folder with a real write and stays root if that fails
+- A full rescan after a large library reorganisation no longer sits at 100% for hours while it removes the systems whose folders are gone, and no longer locks you out while it does: logins and session refreshes keep working, and the rescan shows its progress through checking for missing files and removing old systems
+- Cleaning up a library with thousands of missing books is much faster, and no longer holds the database for the whole run
+- A full rescan removes a game in a shelf or system family that was left empty by moving or renaming its files with the file manager, instead of leaving it listed with 0 books until the scheduled cleanup ran
+- A library scan that finds the database busy, for example while a backup or another worker is writing, skips that file cleanly and carries on rather than risking an error or a change saved after it was reported as rolled back
+- Stopping a duplicate scan works when Grimoire runs several workers without Valkey, and a second scan can no longer start on another worker while one is running
+- A scanned book carrying a few pages of real text, such as a digitally-set cover or a bundled web enhancement, is read with OCR instead of being left mostly unsearchable
+- A scan with its chapter title stamped on every page is read with OCR, instead of being left searchable only by its headers
+- Reading a book with OCR keeps the pages that already had their own text in search, instead of dropping them
+- A book that is mostly full-page art, such as a map pack, isn't read with OCR just because its pictures carry no text: a few of its pages are sampled first, and it keeps its own text if they read like artwork
+- **Re-OCR** appears in the actions menu of a scanned book with only a few pages of text, so books already in the library can be read in full
+- A book asked to be re-read with OCR while another book is being read is no longer left waiting until a restart or the next scan
+- Opening a large book or zooming in deeply no longer stalls the rest of Grimoire for half a minute or fails other requests with server errors
+- Opening a book that has been removed, or that the server can't load, says so instead of showing a spinner forever
+- A page that fails to display shows a "Something went wrong" panel with Reload and Back buttons instead of a blank screen, and the sidebar keeps working so you can move on
+- Clicking quickly from one campaign note to another no longer leaves the first note on screen under the second's name, where editing it changed the wrong note
+- A long system name on a library card no longer breaks in the middle of a word when the 18+ and book-count badges sit beside it: the badges move below the name instead
+- A map whose file is replaced shows the new image the next time it is opened, instead of the copy the browser kept from before
+- Books that belong to no game system no longer vanish from players' and GMs' book lists, search and OPDS feeds once any system is restricted to GMs or admins
+- The campaigns page and the admin user list no longer slow down as campaigns, members and users are added
 - **Update all** and the update badge no longer replace an add-on you placed by hand with an index add-on that happens to share its id, and an add-on installed from one source is no longer updated from another
 - Updating a script add-on whose script is unchanged keeps its approval, so it keeps working instead of waiting to be approved again
 - **Fetch metadata** on an EPUB with a damaged compressed file inside reports that it has no file metadata instead of failing
 - **Sync collection now** reports an unexpected answer from Grimoire Codex DB as a connection problem instead of failing
 - An OPDS feed URL with an impossibly large `page` is refused instead of failing
-- A full rescan after a large library reorganisation no longer sits at 100% for hours while it removes the systems whose folders are gone, and no longer locks you out while it does: logins and session refreshes keep working, and the rescan shows its progress through checking for missing files and removing old systems
-- Cleaning up a library with thousands of missing books is much faster, and no longer holds the database for the whole run
-- A full rescan now removes a game in a shelf or system family that was left empty by moving or renaming its files with the file manager, instead of leaving it listed with 0 books until the scheduled cleanup ran
-- A long system name on a library card no longer breaks in the middle of a word when the 18+ and book-count badges sit beside it: the badges move below the name instead
-- A scanned book carrying a few pages of real text, such as a digitally-set cover or a bundled web enhancement, is read with OCR instead of being left mostly unsearchable
-- A scan with its chapter title stamped on every page is read with OCR, instead of being left searchable only by its headers
-- Reading a book with OCR keeps the pages that already had their own text in search, instead of dropping them
-- A book that is mostly full-page art, such as a map pack, isn't read with OCR just because its pictures carry no text: a few of its pages are sampled first, and it keeps its own text if they read like artwork
-- Re-OCR appears in the actions menu of a scanned book with only a few pages of text, so books already in the library can be read in full
-- A book asked to be re-read with OCR while another book is being read is no longer left waiting until a restart or the next scan
-- Books that belong to no game system no longer vanish from players' and GMs' book lists, search and OPDS feeds once any system is restricted to GMs or admins
-- A page that fails to display now shows a "Something went wrong" panel with Reload and Back buttons instead of a blank screen, and the sidebar keeps working so you can move on
-- Opening a book that has been removed, or that the server can't load, says so instead of showing a spinner forever
-- Clicking quickly from one campaign note to another no longer leaves the first note on screen under the second's name, where editing it changed the wrong note
-- Merging duplicates with "delete files" on no longer deletes the merged copies' files if saving the merge fails, which used to leave them listed in the library with nothing on disk
-- Opening a large book or zooming in deeply no longer stalls the rest of Grimoire for half a minute or fails other requests with server errors. Pages waiting to render no longer hold on to the database, and once `RENDER_QUEUE_LIMIT` pages (default `16`) are already rendering, the reader is told to try again shortly and does so by itself
-
-- Renaming, moving or uploading into a library folder Grimoire doesn't have permission to write to no longer says the library is mounted read-only. It names the folder and the user Grimoire runs as, and points to `PUID`/`PGID`; a library that really is mounted read-only still says so
-- Grimoire stays root at start-up when the user it would switch to can't write to folders inside the library, not just the library folder itself, so moving and renaming keep working after updating from a version that ran as root
-- On NAS filesystems that refuse writes a permission check allows, Grimoire no longer switches to a user that can't write to the data folder and then fails to start; it tests the data folder with a real write and stays root if that fails
-- Stopping a duplicate scan works when Grimoire runs several workers without Valkey, and a second scan can no longer start on another worker while one is running
-- A map whose file is replaced shows the new image the next time it is opened, instead of the copy the browser kept from before
 - The API schema at `/api/openapi.json` no longer gives the share-link and calendar-feed routes two operations with the same id, so API client generators and the docs page's "Try it out" work for them, and their ids no longer change between restarts
-- The campaigns page and the admin user list no longer slow down as campaigns, members and users are added
-- A library scan that finds the database busy, for example while a backup or another worker is writing, skips that file cleanly and carries on rather than risking an error or a change saved after it was reported as rolled back
 
 ## [1.9.2] - 2026-10-23
 
@@ -766,7 +769,8 @@ Initial release. A self-hosted library manager for your TTRPG PDFs, battlemaps, 
 - Explicit content controls with per-user opt-in
 - Docker-first deployment
 
-[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.9.2...HEAD
+[Unreleased]: https://github.com/hunter-read/grimoire/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/hunter-read/grimoire/compare/v1.9.2...v1.10.0
 [1.9.2]: https://github.com/hunter-read/grimoire/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/hunter-read/grimoire/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/hunter-read/grimoire/compare/v1.8.0...v1.9.0
